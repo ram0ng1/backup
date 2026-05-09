@@ -39,6 +39,43 @@ class ExportJob
     /** Hard ceiling on a single file we'll bundle (skip larger). */
     public const FILE_SIZE_LIMIT = 2 * 1024 * 1024 * 1024; // 2 GB
 
+    /**
+     * Directories we never descend into while scanning extension or
+     * project paths. Without these, a single workbench extension with
+     * `node_modules/` can balloon a backup from a few MB to hundreds
+     * of MB and tens of thousands of entries — and none of it is
+     * useful at restore time (npm/yarn / git can rebuild it cleanly).
+     *
+     * Matched by directory basename anywhere in the tree, so e.g.
+     * a nested `js/node_modules/` is also pruned.
+     */
+    private const PRUNE_DIR_NAMES = [
+        // Package managers
+        'node_modules' => true,
+        // Build artifacts that are reproducible from source. We
+        // intentionally KEEP `dist` because Flarum loads it at
+        // runtime — it's regenerable, but the destination would
+        // otherwise need `npm run build` before the extension works.
+        'dist-typings' => true,
+        '.parcel-cache' => true,
+        // Version control
+        '.git'         => true,
+        '.svn'         => true,
+        '.hg'          => true,
+        // Tooling / IDE
+        '.idea'        => true,
+        '.vscode'      => true,
+        '.history'     => true,
+        // Test / coverage outputs
+        'coverage'     => true,
+        '.nyc_output'  => true,
+        // Python noise
+        '__pycache__'  => true,
+        // We never want to recurse into a nested vendor/ inside an
+        // extension dir (would pull thousands of composer files).
+        'vendor'       => true,
+    ];
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
@@ -615,21 +652,30 @@ class ExportJob
 
     /**
      * Recursively walk a directory, accumulating files into the manifest
-     * and into $totalBytes. Skipped paths (passed via $skipDirs) are not
-     * descended into.
+     * and into $totalBytes. The iterator NEVER descends into a directory
+     * whose basename is in PRUNE_DIR_NAMES (node_modules, .git, etc.) or
+     * whose absolute path appears in $skipDirs.
      *
      * @param array<string, array{name: string, absolute: string, size: int}> $files
      */
     private function collectFiles(string $base, string $logicalPrefix, array &$files, int &$totalBytes, array $skipDirs = []): void
     {
         if (! is_dir($base)) return;
-        $skipMap = array_flip($skipDirs);
+        $skipMap  = array_flip($skipDirs);
+        $pruneMap = self::PRUNE_DIR_NAMES;
 
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
                 new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::FOLLOW_SYMLINKS),
-                function (\SplFileInfo $current) use ($skipMap) {
-                    return ! isset($skipMap[$current->getPathname()]);
+                function (\SplFileInfo $current) use ($skipMap, $pruneMap) {
+                    if (isset($skipMap[$current->getPathname()])) return false;
+                    // Skip the directory entirely — the iterator
+                    // checks the filter BEFORE descending, so we
+                    // never enumerate the contents of pruned dirs.
+                    if ($current->isDir() && isset($pruneMap[$current->getFilename()])) {
+                        return false;
+                    }
+                    return true;
                 }
             )
         );
