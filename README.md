@@ -42,8 +42,7 @@ cross-server transfer, per-extension picking, and automatic URL rewriting.
 
 ### ✨ Highlights
 
-- **Single portable `.flarum` file** — custom streaming format (not `.wpress`,
-  not zip), forward-only so multi-GB backups never fit in memory
+- **Single portable `.flarum` file**
 - **Pick what to bundle** — database, `public/assets`, `storage`, and individual
   extensions, with a tag on each row showing whether it lives in `workbench/`
   or in `vendor/` (composer-managed)
