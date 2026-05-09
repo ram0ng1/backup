@@ -1,8 +1,8 @@
 # 📦 Backup &amp; Migration — Portable Backups for Flarum
 
-**A complete backup, export and import system for Flarum 2.x**
+![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square) [![Latest Stable Version](https://img.shields.io/packagist/v/ramon/backup.svg?style=flat-square)](https://packagist.org/packages/ramon/backup) [![Total Downloads](https://img.shields.io/packagist/dt/ramon/backup.svg?style=flat-square)](https://packagist.org/packages/ramon/backup) [![GitHub Release](https://img.shields.io/github/v/release/ram0ng1/backup?style=flat-square&label=release&color=success)](https://github.com/ram0ng1/backup/releases/latest) [![Donate](https://img.shields.io/badge/donate-stripe-%236772E5?style=flat-square)](https://donate.stripe.com/fZe5o66nebkf39S28a)
 
-![Backup admin dashboard](https://cdn.ramonguilherme.com.br/downloads/backup/admin-dashboard.png)
+**A complete backup, export and import system for Flarum 2.x**
 
 ### About the Project
 
@@ -21,28 +21,10 @@ cross-server transfer, per-extension picking, and automatic URL rewriting.
 
 ---
 
-### 📸 Screenshots
-
-**Admin Dashboard**
-![Admin dashboard](https://cdn.ramonguilherme.com.br/downloads/backup/admin-dashboard.png)
-
-**Creating a Backup**
-![Create backup modal](https://cdn.ramonguilherme.com.br/downloads/backup/create-backup-modal.png)
-
-**Restoring a Backup — Upload &amp; Inspect**
-![Restore upload step](https://cdn.ramonguilherme.com.br/downloads/backup/restore-backup-modal.png)
-
-**Selecting What to Restore**
-![Restore selection](https://cdn.ramonguilherme.com.br/downloads/backup/backup-modal-restore.png)
-
-**Restore Complete — Login Required**
-![Logged out completion screen](https://cdn.ramonguilherme.com.br/downloads/backup/backup-modal-done.png)
-
----
-
 ### ✨ Highlights
 
-- **Single portable `.flarum` file**
+- **Single portable `.flarum` file** — custom streaming format (not `.wpress`,
+  not zip), forward-only so multi-GB backups never need to fit in memory
 - **Pick what to bundle** — database, `public/assets`, `storage`, and individual
   extensions, with a tag on each row showing whether it lives in `workbench/`
   or in `vendor/` (composer-managed)
@@ -94,6 +76,7 @@ panel.
 ### Links
 
 - **GitHub:** [github.com/ram0ng1/backup](https://github.com/ram0ng1/backup)
+- **Packagist:** [packagist.org/packages/ramon/backup](https://packagist.org/packages/ramon/backup)
 - **Issues:** [github.com/ram0ng1/backup/issues](https://github.com/ram0ng1/backup/issues)
 - **Donate:** [Stripe](https://donate.stripe.com/fZe5o66nebkf39S28a)
 
