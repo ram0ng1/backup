@@ -1,0 +1,342 @@
+// Backup admin panel styles. Most colors come from Flarum core's
+// admin theme variables so the panel lives gracefully in both light
+// and dark themes.
+
+.BackupPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+  }
+
+  .helpText {
+    margin: 0 0 12px;
+  }
+}
+
+.BackupPanel-actionButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+
+  .Button {
+    min-width: 160px;
+  }
+}
+
+.BackupPanel-list {
+  margin-top: 0;
+}
+
+// ─── List ────────────────────────────────────────────────────────────
+
+.BackupList {
+  width: 100%;
+  border-collapse: collapse;
+
+  th, td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--control-bg, rgba(0, 0, 0, 0.06));
+    vertical-align: middle;
+    font-size: 13px;
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--muted-color);
+  }
+}
+
+.BackupList-empty {
+  padding: 20px 0;
+  text-align: center;
+}
+
+.BackupList-when {
+  font-weight: 600;
+}
+.BackupList-filename {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--muted-color);
+  word-break: break-all;
+}
+
+.BackupList-tag {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--control-bg, rgba(0, 0, 0, 0.06));
+  color: var(--control-color, currentColor);
+}
+.BackupList-tag--db         { background: rgba(29, 155, 240, 0.18); }
+.BackupList-tag--assets     { background: rgba(212, 175, 55, 0.20); }
+.BackupList-tag--storage    { background: rgba(155, 89, 182, 0.18); }
+.BackupList-tag--extensions { background: rgba(46, 204, 113, 0.20); }
+
+.BackupList-encryption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.BackupList-encryption--on  { color: #2ecc71; }
+.BackupList-encryption--off { color: var(--muted-color); }
+
+.BackupList-actions {
+  text-align: right;
+  white-space: nowrap;
+
+  .Button { margin-left: 6px; }
+}
+
+// ─── Encryption card ─────────────────────────────────────────────────
+
+.BackupEncryptionCard {
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--body-bg);
+
+  header {
+    margin-bottom: 12px;
+  }
+}
+
+.BackupEncryption-statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.BackupEncryption-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+
+  .icon { font-size: 14px; }
+}
+.BackupEncryption-badge--ok {
+  background: rgba(46, 204, 113, 0.10);
+  border-color: rgba(46, 204, 113, 0.30);
+  color: #2ecc71;
+}
+.BackupEncryption-badge--missing {
+  background: rgba(231, 76, 60, 0.10);
+  border-color: rgba(231, 76, 60, 0.30);
+  color: #e74c3c;
+}
+.BackupEncryption-badgeState {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.BackupEncryption-publicKey {
+  margin-top: 12px;
+
+  pre {
+    flex: 1;
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--control-bg, rgba(0, 0, 0, 0.06));
+    border-radius: 6px;
+    overflow-x: auto;
+    word-break: break-all;
+    font-size: 11px;
+  }
+}
+.BackupEncryption-publicKeyRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+// ─── Reveal / regenerate modals ──────────────────────────────────────
+
+.BackupReveal-snippet {
+  background: var(--body-bg);
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  padding: 12px;
+  word-break: break-all;
+  font-size: 12px;
+}
+.BackupReveal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.BackupRegenerate-confirm {
+  display: block;
+  margin: 12px 0;
+  user-select: none;
+}
+
+// ─── Export modal ────────────────────────────────────────────────────
+
+.BackupExport-fieldset,
+.BackupImport-fieldset {
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+
+  legend {
+    padding: 0 6px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+}
+
+.BackupExport-checkbox {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: start;
+  gap: 4px 8px;
+  margin: 6px 0;
+}
+.BackupExport-checkbox input { margin-top: 4px; }
+.BackupExport-checkbox-label { font-weight: 600; }
+.BackupExport-checkbox-help {
+  grid-column: 2;
+  margin: 0;
+  font-size: 12px;
+}
+
+.BackupExport-keyInput,
+.BackupImport-keyInput {
+  width: 100%;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.BackupExport-progress,
+.BackupImport-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.BackupExport-status,
+.BackupImport-status {
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--control-bg, rgba(0, 0, 0, 0.04));
+
+  strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+  p { margin: 0; font-size: 13px; opacity: 0.85; }
+}
+.BackupExport-status--error,
+.BackupImport-status--error {
+  background: rgba(231, 76, 60, 0.10);
+  color: #e74c3c;
+}
+.BackupExport-status--done,
+.BackupImport-status--done {
+  background: rgba(46, 204, 113, 0.10);
+  color: #2ecc71;
+}
+
+.BackupExport-bar,
+.BackupImport-bar {
+  height: 10px;
+  background: var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  overflow: hidden;
+}
+.BackupExport-bar-fill,
+.BackupImport-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1d9bf0, #2ecc71);
+  transition: width 0.25s ease-out;
+}
+
+.BackupExport-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted-color);
+}
+
+.BackupExport-progress-actions,
+.BackupImport-progress-actions {
+  text-align: right;
+}
+
+// ─── Import modal ────────────────────────────────────────────────────
+
+.BackupImport-fileLabel {
+  display: block;
+  border: 2px dashed var(--control-bg, rgba(0, 0, 0, 0.20));
+  border-radius: 6px;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  margin: 12px 0;
+
+  input[type='file'] {
+    display: block;
+    margin: 0 auto 8px;
+  }
+}
+
+.BackupImport-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+  margin: 12px 0;
+
+  dt {
+    font-weight: 600;
+    color: var(--muted-color);
+  }
+  dd { margin: 0; }
+}
+
+.BackupImport-confirmAlert {
+  margin-top: 16px;
+}
+.BackupImport-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-weight: 600;
+}
+.BackupImport-keyHint {
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.BackupImport-urlNote {
+  margin-top: 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(29, 155, 240, 0.10);
+  color: #1d9bf0;
+  padding: 8px 12px;
+  border-radius: 6px;
+
+  .icon { margin-top: 2px; }
+}
