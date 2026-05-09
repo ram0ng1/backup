@@ -9,6 +9,13 @@ export interface ImportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
 }
 
+interface ArchiveManifest {
+  asset_count?: number;
+  storage_count?: number;
+  extension_count?: number;
+  extensions?: string[];
+}
+
 interface InspectResult {
   job_id: string;
   is_encrypted: boolean;
@@ -19,6 +26,7 @@ interface InspectResult {
     php_version?: string;
     contents?: string[];
     source_url?: string;
+    manifest?: ArchiveManifest;
   };
   size: number;
 }
@@ -60,6 +68,16 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   protected privateKey = '';
   protected confirmReplace = false;
   protected starting = false;
+
+  // Section toggles. Default to "everything that's actually inside the
+  // archive" — the user explicitly opts OUT of pieces they don't want
+  // to overwrite. Initialised when the inspect result arrives.
+  protected sectionDb = false;
+  protected sectionAssets = false;
+  protected sectionStorage = false;
+  protected sectionExtensions = false;
+  // Per-extension toggles, keyed by directory name from the manifest.
+  protected extensionsByName: Record<string, boolean> = {};
 
   protected status: ImportProgress | null = null;
   protected polling = false;
@@ -139,6 +157,20 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         body: fd,
       });
       this.inspect = res;
+
+      // Seed section toggles from what the archive actually contains.
+      // Anything missing from the archive can't be ticked anyway, so
+      // there's no value in defaulting it to true.
+      const contents = res.meta.contents || [];
+      this.sectionDb = contents.includes('db');
+      this.sectionAssets = contents.includes('assets');
+      this.sectionStorage = contents.includes('storage');
+      this.sectionExtensions = contents.includes('extensions');
+
+      const exts = res.meta.manifest?.extensions || [];
+      this.extensionsByName = {};
+      for (const name of exts) this.extensionsByName[name] = true;
+
       this.stage = 'configure';
     } catch (e: any) {
       this.uploadError = e?.response?.errors?.[0]?.detail || (trans('upload_failed') as string);
@@ -190,6 +222,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           <i className="icon fas fa-info-circle" /> {trans('url_rewrite_note')}
         </div>
 
+        {this.selectionFieldset(i)}
+
         {i.is_encrypted && (
           <fieldset className="BackupImport-fieldset">
             <legend>{trans('key_title')}</legend>
@@ -236,6 +270,94 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     );
   }
 
+  selectionFieldset(i: InspectResult) {
+    const contents = i.meta.contents || [];
+    const manifest = i.meta.manifest || {};
+    const hasDb = contents.includes('db');
+    const hasAssets = contents.includes('assets');
+    const hasStorage = contents.includes('storage');
+    const hasExtensions = contents.includes('extensions');
+    const extList = manifest.extensions || [];
+
+    return (
+      <fieldset className="BackupImport-fieldset">
+        <legend>{trans('selection_title')}</legend>
+        <p className="helpText">{trans('selection_help')}</p>
+
+        {hasDb && this.sectionRow('db', this.sectionDb, (v) => (this.sectionDb = v))}
+        {hasAssets && this.sectionRow('assets', this.sectionAssets, (v) => (this.sectionAssets = v), manifest.asset_count)}
+        {hasStorage && this.sectionRow('storage', this.sectionStorage, (v) => (this.sectionStorage = v), manifest.storage_count)}
+        {hasExtensions && (
+          <>
+            {this.sectionRow('extensions', this.sectionExtensions, (v) => {
+              this.sectionExtensions = v;
+              // Cascade: turning the section off / on flips every
+              // child to match. The user can then untick individuals.
+              for (const name of extList) this.extensionsByName[name] = v;
+            }, manifest.extension_count)}
+
+            {this.sectionExtensions && extList.length > 0 && (
+              <div className="BackupImport-extList">
+                {extList.map((name) => (
+                  <label className="BackupImport-extRow" key={name}>
+                    <input
+                      type="checkbox"
+                      checked={!!this.extensionsByName[name]}
+                      onchange={(e: Event) => {
+                        this.extensionsByName[name] = (e.target as HTMLInputElement).checked;
+                      }}
+                    />{' '}
+                    <code>{name}</code>
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </fieldset>
+    );
+  }
+
+  sectionRow(key: 'db' | 'assets' | 'storage' | 'extensions', checked: boolean, set: (v: boolean) => void, count?: number) {
+    return (
+      <label className="BackupImport-sectionRow">
+        <input
+          type="checkbox"
+          checked={checked}
+          onchange={(e: Event) => set((e.target as HTMLInputElement).checked)}
+        />{' '}
+        <span className="BackupImport-sectionLabel">{trans('section_' + key)}</span>
+        {count !== undefined && count > 0 && (
+          <span className="BackupImport-sectionCount helpText">
+            {' '}
+            ({trans('section_count', { count })})
+          </span>
+        )}
+      </label>
+    );
+  }
+
+  buildSelection() {
+    // The backend treats `extensions: true` as "all" and an array as
+    // a whitelist of directory names. When every box is checked, send
+    // `true` so the user's intent isn't lost if a new extension shows
+    // up between inspect and apply (it shouldn't, but be defensive).
+    const extEntries = Object.entries(this.extensionsByName);
+    const allChecked = extEntries.length > 0 && extEntries.every(([, v]) => v);
+    const extensionsField: boolean | string[] = !this.sectionExtensions
+      ? false
+      : allChecked
+        ? true
+        : extEntries.filter(([, v]) => v).map(([k]) => k);
+
+    return {
+      db: this.sectionDb,
+      assets: this.sectionAssets,
+      storage: this.sectionStorage,
+      extensions: extensionsField,
+    };
+  }
+
   async startRestore() {
     if (!this.inspect) return;
     this.starting = true;
@@ -247,6 +369,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         body: {
           private_key: this.privateKey.trim() || null,
           confirm_replace: this.confirmReplace,
+          selection: this.buildSelection(),
         },
       });
       this.stage = 'progress';

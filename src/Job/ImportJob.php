@@ -49,7 +49,12 @@ class ImportJob
      * Begin an import. The archive must already be staged in the job
      * dir as `upload.flarum` (the upload controller does that).
      */
-    public function start(string $jobId, ?string $privateKey, bool $confirmReplace, ?int $userId): JobState
+    /**
+     * @param array{db?: bool, assets?: bool, storage?: bool, extensions?: bool|list<string>}|null $selection
+     *        null = restore everything in the archive
+     *        extensions: true = all, false = none, array = specific extension dirs
+     */
+    public function start(string $jobId, ?string $privateKey, bool $confirmReplace, ?array $selection, ?int $userId): JobState
     {
         if (! $confirmReplace) {
             throw new RuntimeException('Import requires explicit replace-confirmation.');
@@ -75,6 +80,7 @@ class ImportJob
             'options' => [
                 'private_key'      => $privateKey ?: null,
                 'confirm_replace'  => true,
+                'selection'        => $this->normaliseSelection($selection),
             ],
             'archive_meta'  => null,
             'progress' => [
@@ -190,6 +196,8 @@ class ImportJob
                 }
             }
 
+            $selection = $opts['selection'] ?? null;
+
             $budget = self::BUDGET_BYTES;
             $dumpFh = fopen($paths['dump'], 'ab');
             if ($dumpFh === false) {
@@ -204,65 +212,44 @@ class ImportJob
                         break;
                     }
 
-                    if ($entry['type'] === Format::TYPE_DB_DUMP) {
+                    $accept = $this->shouldExtract($entry['name'], $entry['type'], $selection);
+                    $dest = ($accept && $entry['type'] === Format::TYPE_FILE)
+                        ? $this->resolveDestination($entry['name'])
+                        : null;
+
+                    // Open a sink: SQL dump file, target file on disk,
+                    // or null (drain into the void). We always consume
+                    // the bytes — skipping just means not writing them.
+                    $sinkFh = null;
+                    if ($accept && $entry['type'] === Format::TYPE_DB_DUMP) {
+                        $sinkFh = $dumpFh;
+                    } elseif ($accept && $dest !== null) {
+                        @mkdir(dirname($dest), 0755, true);
+                        $sinkFh = fopen($dest, 'wb');
+                        if ($sinkFh === false) {
+                            throw new RuntimeException('Could not write file: '.$dest);
+                        }
+                    }
+
+                    try {
                         $remaining = $entry['length'];
                         while ($remaining > 0) {
                             $want = (int) min(Format::CHUNK_SIZE, $remaining);
                             $chunk = $reader->readEntryBytes($want);
-                            fwrite($dumpFh, $chunk);
+                            if ($sinkFh !== null && $sinkFh !== $dumpFh) {
+                                fwrite($sinkFh, $chunk);
+                            } elseif ($sinkFh === $dumpFh) {
+                                fwrite($dumpFh, $chunk);
+                            }
                             $remaining -= strlen($chunk);
                             $progress['processed_bytes'] += strlen($chunk);
                         }
-                        $progress['extracted_entries']++;
-                        $budget -= $entry['length'];
-                        continue;
+                    } finally {
+                        if ($sinkFh !== null && $sinkFh !== $dumpFh) {
+                            fclose($sinkFh);
+                        }
                     }
 
-                    if ($entry['type'] === Format::TYPE_FILE) {
-                        $dest = $this->resolveDestination($entry['name']);
-                        if ($dest === null) {
-                            // Unknown root — drain the bytes so the
-                            // stream stays aligned, but don't write.
-                            $remaining = $entry['length'];
-                            while ($remaining > 0) {
-                                $want = (int) min(Format::CHUNK_SIZE, $remaining);
-                                $reader->readEntryBytes($want);
-                                $remaining -= $want;
-                            }
-                            $progress['extracted_entries']++;
-                            $budget -= $entry['length'];
-                            continue;
-                        }
-
-                        @mkdir(dirname($dest), 0755, true);
-                        $fh = fopen($dest, 'wb');
-                        if ($fh === false) {
-                            throw new RuntimeException('Could not write file: '.$dest);
-                        }
-                        try {
-                            $remaining = $entry['length'];
-                            while ($remaining > 0) {
-                                $want = (int) min(Format::CHUNK_SIZE, $remaining);
-                                $chunk = $reader->readEntryBytes($want);
-                                fwrite($fh, $chunk);
-                                $remaining -= strlen($chunk);
-                                $progress['processed_bytes'] += strlen($chunk);
-                            }
-                        } finally {
-                            fclose($fh);
-                        }
-                        $progress['extracted_entries']++;
-                        $budget -= $entry['length'];
-                        continue;
-                    }
-
-                    // Unknown entry type — drain and ignore.
-                    $remaining = $entry['length'];
-                    while ($remaining > 0) {
-                        $want = (int) min(Format::CHUNK_SIZE, $remaining);
-                        $reader->readEntryBytes($want);
-                        $remaining -= $want;
-                    }
                     $progress['extracted_entries']++;
                     $budget -= $entry['length'];
                 }
@@ -310,6 +297,16 @@ class ImportJob
             return;
         }
 
+        // Each tick opens a fresh PDO connection, so the FOREIGN_KEY_CHECKS
+        // session variable from the previous tick is gone. We also can't
+        // rely on the dump's own SET line — even though it's emitted as
+        // a separate statement now, an FK check failure mid-batch would
+        // still abort. Disable explicitly at the start of every tick that
+        // runs SQL; re-enable when we cross EOF below.
+        try {
+            $this->db->unprepared('SET FOREIGN_KEY_CHECKS = 0');
+        } catch (Throwable) { /* best-effort */ }
+
         $size = filesize($paths['dump']) ?: 0;
         $offset = (int) $cursor['restore_offset'];
 
@@ -354,6 +351,13 @@ class ImportJob
         );
 
         if ($offset >= $size) {
+            // Re-enable FK enforcement for any subsequent code paths
+            // sharing this connection. Belt-and-braces: the next tick
+            // would get a fresh connection anyway.
+            try {
+                $this->db->unprepared('SET FOREIGN_KEY_CHECKS = 1');
+            } catch (Throwable) { /* best-effort */ }
+
             $state->set('phase', 'rewrite');
         }
 
@@ -432,6 +436,79 @@ class ImportJob
         $state->set('phase', 'done');
         $state->set('message', 'Restore complete.');
         $state->save();
+    }
+
+    /**
+     * Normalise the user's selection into a stable shape:
+     *   ['db' => bool, 'assets' => bool, 'storage' => bool,
+     *    'extensions' => true | false | list<string>]
+     *
+     * `null` short-circuits to restore-everything for backwards
+     * compatibility with older import requests.
+     *
+     * @param array<string, mixed>|null $raw
+     * @return array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>}|null
+     */
+    private function normaliseSelection(?array $raw): ?array
+    {
+        if ($raw === null) return null;
+
+        $extensions = $raw['extensions'] ?? true;
+        if (is_array($extensions)) {
+            $extensions = array_values(array_filter(array_map(
+                fn ($v) => is_string($v) ? $v : null,
+                $extensions
+            )));
+        } elseif (! is_bool($extensions)) {
+            $extensions = (bool) $extensions;
+        }
+
+        return [
+            'db'         => ! empty($raw['db']),
+            'assets'     => ! empty($raw['assets']),
+            'storage'    => ! empty($raw['storage']),
+            'extensions' => $extensions,
+        ];
+    }
+
+    /**
+     * Decide whether an entry should be extracted, based on the user's
+     * import selection. The DB is all-or-nothing; file roots
+     * (assets/storage) flip per checkbox; extensions can be filtered
+     * down to specific top-level directory names. Unknown roots fall
+     * back to "restore" so future archive shapes don't get silently
+     * dropped.
+     */
+    private function shouldExtract(string $name, int $type, ?array $selection): bool
+    {
+        if ($selection === null) return true;
+
+        if ($type === Format::TYPE_DB_DUMP) {
+            return ! empty($selection['db']);
+        }
+
+        $slash = strpos($name, '/');
+        if ($slash === false) return false;
+
+        $root = substr($name, 0, $slash);
+        return match ($root) {
+            'assets'  => ! empty($selection['assets']),
+            'storage' => ! empty($selection['storage']),
+            'extensions' => $this->isExtensionAllowed($name, $selection['extensions'] ?? null),
+            default   => true,
+        };
+    }
+
+    private function isExtensionAllowed(string $name, mixed $extSelection): bool
+    {
+        if ($extSelection === true)  return true;
+        if ($extSelection === false || $extSelection === null) return false;
+        if (! is_array($extSelection)) return false;
+
+        $rest = substr($name, strlen('extensions/'));
+        $cut  = strpos($rest, '/');
+        $extDir = $cut === false ? $rest : substr($rest, 0, $cut);
+        return in_array($extDir, $extSelection, true);
     }
 
     /**

@@ -179,9 +179,37 @@ class ExportJob
             'tables' => ! empty($contents['db']) ? $this->listTablesSafely() : [],
         ]));
 
-        // Persist the manifest separately so we don't bloat the JSON
-        // state file with thousands of file paths.
+        // Persist the file manifest separately so we don't bloat the
+        // JSON state file with thousands of file paths.
         @file_put_contents($state->get('paths')['manifest'], json_encode($files));
+
+        // Build a compact human-facing summary that travels in the
+        // archive header. The import UI uses this to render selection
+        // checkboxes ("restore which extensions?") without having to
+        // parse the entry stream up front.
+        $summary = [
+            'asset_count'     => 0,
+            'storage_count'   => 0,
+            'extension_count' => 0,
+            'extensions'      => [],
+        ];
+        $extDirs = [];
+        foreach ($files as $f) {
+            $slash = strpos($f['name'], '/');
+            if ($slash === false) continue;
+            $root = substr($f['name'], 0, $slash);
+            if ($root === 'assets')        $summary['asset_count']++;
+            elseif ($root === 'storage')   $summary['storage_count']++;
+            elseif ($root === 'extensions') {
+                $summary['extension_count']++;
+                $rest = substr($f['name'], $slash + 1);
+                $cut  = strpos($rest, '/');
+                $extDirs[$cut === false ? $rest : substr($rest, 0, $cut)] = true;
+            }
+        }
+        $summary['extensions'] = array_values(array_keys($extDirs));
+        sort($summary['extensions'], SORT_STRING);
+        $state->set('manifest_summary', $summary);
 
         $progress = $state->get('progress');
         $progress['total_files']  = count($files);
@@ -596,6 +624,10 @@ class ExportJob
             // it, a backup imported on a different host would break
             // every absolute link / redirect / cookie path.
             'source_url'     => $this->detectSourceUrl(),
+            // Summary the import UI uses to populate selection
+            // checkboxes (per-section file counts + list of extension
+            // directory names found inside).
+            'manifest'       => (array) $state->get('manifest_summary', []),
         ];
     }
 

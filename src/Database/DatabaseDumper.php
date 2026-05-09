@@ -68,19 +68,25 @@ class DatabaseDumper
     public function preamble(): string
     {
         $now = gmdate('Y-m-d H:i:s');
-        $sql = <<<SQL
--- Flarum backup — database dump
--- Generated at $now UTC
-SET NAMES utf8mb4;
-SET FOREIGN_KEY_CHECKS = 0;
-SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';
-SQL;
-        return $sql . self::STATEMENT_DELIMITER;
+        // Each statement is delimited individually so the restorer
+        // can execute them via independent unprepared() calls. Bundling
+        // multiple statements into one block would lean on PDO::exec
+        // multi-statement support, which is configuration-dependent
+        // and silently drops everything past the first SQL on stricter
+        // setups — leaving FOREIGN_KEY_CHECKS at 1 and breaking the
+        // first CREATE TABLE that references a not-yet-created table.
+        return implode(self::STATEMENT_DELIMITER, [
+            "-- Flarum backup — database dump",
+            "-- Generated at $now UTC",
+            "SET NAMES utf8mb4",
+            "SET FOREIGN_KEY_CHECKS = 0",
+            "SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'",
+        ]) . self::STATEMENT_DELIMITER;
     }
 
     public function epilogue(): string
     {
-        return "SET FOREIGN_KEY_CHECKS = 1;" . self::STATEMENT_DELIMITER;
+        return "SET FOREIGN_KEY_CHECKS = 1" . self::STATEMENT_DELIMITER;
     }
 
     /**

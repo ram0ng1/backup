@@ -47,7 +47,17 @@ class StartImportController implements RequestHandlerInterface
             ]);
         }
 
-        $state = $this->job->start($id, $privateKey ?: null, $confirmReplace, (int) $actor->id ?: null);
+        // Selection is optional. When absent we restore everything in
+        // the archive (backwards-compatible with older clients).
+        $selection = is_array($body['selection'] ?? null) ? $body['selection'] : null;
+
+        $state = $this->job->start(
+            $id,
+            $privateKey ?: null,
+            $confirmReplace,
+            $selection,
+            (int) $actor->id ?: null
+        );
 
         return new JsonResponse([
             'job_id'  => $id,
