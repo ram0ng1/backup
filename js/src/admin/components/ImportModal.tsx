@@ -102,6 +102,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   title() {
+    if (this.stage === 'progress' && this.status?.phase === 'done') {
+      return this.sectionDb ? trans('logout_title') : trans('done_title');
+    }
     return trans('title');
   }
 
@@ -513,7 +516,12 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const s = this.status;
     if (!s) return <LoadingIndicator />;
 
-    const isDone = s.phase === 'done';
+    // Once the server reports phase=done we hand the screen over to a
+    // dedicated completion view: the user has finished waiting and
+    // now needs to know what to do next (which differs depending on
+    // whether the DB was actually replaced).
+    if (s.phase === 'done') return this.completedContent();
+
     const isError = s.phase === 'error';
     const pct = Math.max(0, Math.min(100, s.progress?.percent || 0));
 
@@ -526,18 +534,12 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
         {!isError && (
           <div className="BackupImport-bar">
-            <div className="BackupImport-bar-fill" style={{ width: `${isDone ? 100 : pct}%` }} />
-          </div>
-        )}
-
-        {isDone && this.sectionDb && (
-          <div className="Alert Alert--info BackupImport-reloadNote">
-            <i className="icon fas fa-info-circle" /> {trans('reload_required')}
+            <div className="BackupImport-bar-fill" style={{ width: `${pct}%` }} />
           </div>
         )}
 
         <div className="Form-group BackupImport-progress-actions">
-          {!isDone && !isError && (
+          {!isError && (
             <Button className="Button" onclick={() => this.cancel()}>
               {trans('cancel_button')}
             </Button>
@@ -547,16 +549,59 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
               {trans('close_button')}
             </Button>
           )}
-          {isDone && (
-            <Button
-              className="Button Button--primary"
-              icon="fas fa-rotate"
-              onclick={() => window.location.reload()}
-            >
-              {trans('reload_button')}
-            </Button>
-          )}
         </div>
+      </div>
+    );
+  }
+
+  /**
+   * Replaces the progress UI as soon as `phase === 'done'`. Two
+   * shapes:
+   *
+   *   - DB restored — the admin's session was just wiped together
+   *     with the rest of the `users` / `sessions` tables. We make
+   *     this very clear and offer a single primary action: reload.
+   *     Anything else (refreshing the list, dismissing) would race
+   *     against an invalidated cookie and surface a confusing 401.
+   *
+   *   - Files only — the session is fine, just close.
+   */
+  completedContent() {
+    if (this.sectionDb) {
+      return (
+        <div className="Modal-body BackupImport-completed BackupImport-completed--logout">
+          <div className="BackupImport-completedIcon">
+            <i className="fas fa-right-from-bracket" />
+          </div>
+          <h3 className="BackupImport-completedTitle">{trans('logout_title')}</h3>
+          <p className="BackupImport-completedBody">{trans('logout_body')}</p>
+
+          <ol className="BackupImport-completedSteps">
+            <li>{trans('logout_step_reload')}</li>
+            <li>{trans('logout_step_login')}</li>
+          </ol>
+
+          <Button
+            className="Button Button--primary BackupImport-completedAction"
+            icon="fas fa-rotate"
+            onclick={() => window.location.reload()}
+          >
+            {trans('logout_button')}
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="Modal-body BackupImport-completed">
+        <div className="BackupImport-completedIcon BackupImport-completedIcon--success">
+          <i className="fas fa-circle-check" />
+        </div>
+        <h3 className="BackupImport-completedTitle">{trans('done_title')}</h3>
+        <p className="BackupImport-completedBody">{trans('done_body')}</p>
+        <Button className="Button Button--primary" onclick={() => this.close()}>
+          {trans('close_button')}
+        </Button>
       </div>
     );
   }

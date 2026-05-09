@@ -418,6 +418,64 @@
   .icon { margin-top: 2px; }
 }
 
+.BackupImport-completed {
+  text-align: center;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.BackupImport-completedIcon {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(231, 159, 23, 0.12);
+  color: #e79f17;
+
+  i { font-size: 32px; }
+}
+.BackupImport-completedIcon--success {
+  background: rgba(46, 204, 113, 0.14);
+  color: #2ecc71;
+}
+.BackupImport-completedTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.BackupImport-completedBody {
+  margin: 0;
+  max-width: 420px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted-color);
+
+  code {
+    font-family: monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--control-bg, rgba(0, 0, 0, 0.06));
+  }
+}
+.BackupImport-completedSteps {
+  text-align: left;
+  margin: 4px 0 8px;
+  padding-left: 22px;
+  font-size: 13px;
+  color: var(--muted-color);
+
+  li { margin-bottom: 4px; }
+}
+.BackupImport-completedAction {
+  min-width: 220px;
+  margin-top: 8px;
+}
+
 .BackupImport-fileLabel {
   display: block;
   border: 2px dashed var(--control-bg, rgba(0, 0, 0, 0.20));
