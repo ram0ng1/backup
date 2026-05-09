@@ -28,11 +28,16 @@
 ## Features
 
 - **Single-file archive** — Custom `.flarum` format (not `.wpress`, not zip): magic-tagged header + entry stream, designed for forward-only streaming so multi-GB backups never need to fit in memory.
-- **Pick what to bundle** — Database / `public/assets` / `storage` / local `workbench` extensions, ticked individually per export.
-- **Resumable progress** — Both export and import run as a chunked-tick loop (~4 MB of work per HTTP request); the admin sees a live progress bar and can cancel mid-flight without leaving partial state behind.
+- **Pick what to bundle, per export** — Database / `public/assets` / `storage` / extensions, ticked individually. Extensions expand into a per-extension picker that detects which were installed via composer (`vendor/`) and which live in `workbench/`, with a tag on each row.
+- **composer.json + composer.lock travel with extensions** — Whenever any extension is bundled the project root composer files come along under `project/`, so vendor extensions remain reproducible on the destination (`composer install` after restore brings them back without surprises).
+- **Pick what to restore, per import** — On the import side the same selection UI appears, populated from the archive's manifest. The admin can untick a section or specific extensions before confirming; skipped entries are drained from the stream rather than written.
+- **Resumable progress** — Both export and import run as a chunked-tick loop (~4 MB of work per HTTP request); the admin sees a live progress bar (with upload `%` during file upload) and can cancel mid-flight without leaving partial state behind.
 - **Optional encryption** — Hybrid libsodium scheme (sealed-box wraps a per-archive XChaCha20-Poly1305 stream key). Public key lives in settings; the matching private key MUST be pasted into `config.php` — the web process never holds a key it has not been told.
 - **Cross-server transfer** — Encrypt to a foreign public key at export time, paste the matching private key at import time; the extension never assumes both ends share `config.php`.
 - **Auto URL rewrite** — The source forum URL is recorded in the archive header. On import, every occurrence in `settings`, `posts.content` and `posts.parsed_content` is rewritten to the destination server's URL, so links / redirects / cookies don't break after a cross-host restore.
+- **Foreign-key-safe restore** — Each restore tick explicitly disables `FOREIGN_KEY_CHECKS` against the active connection, so DDL referencing not-yet-created tables (alphabetical-order create) succeeds without ordering dance.
+- **Smart pruning while scanning** — `node_modules`, `.git`, `.idea`, `coverage`, nested `vendor/` and friends are skipped before the iterator descends, so a workbench extension scan stays seconds-fast instead of stat-ing tens of thousands of npm files.
+- **Logged-out completion screen** — When the restore included the database, the import modal swaps to a dedicated "you've been logged out" screen with a single primary action (reload + sign in) — no chance for the admin to fire stale-session API calls and meet a confusing `401`.
 - **Backups library** — Saved archives are listed in the admin panel with size, contents tags, encryption status and one-click download or delete.
 - **Replace-only restore** — Imports always confirm with an "I understand this replaces my data" check; the SQL dump is `DROP TABLE` + `CREATE TABLE` per table, so a restore returns the install to a known-clean state.
 
@@ -87,7 +92,8 @@ Example:
 | Database | Bundle a SQL dump of every table (DROP / CREATE / INSERT) | `true` |
 | Assets | Bundle `public/assets` — avatars, attachments, user uploads | `true` |
 | Storage | Bundle `storage/` — cache, sessions, logs (rarely portable) | `false` |
-| Extensions | Bundle local extensions under `workbench/` | `false` |
+| Extensions | Show the per-extension picker (workbench + vendor) | `false` |
+| Extension `<id>` | Per-extension toggle inside the picker | `true` for every installed extension |
 | Encrypt | Encrypt the archive body via libsodium | `false` |
 | Foreign public key | Paste a different public key to encrypt for transfer | — |
 
@@ -95,8 +101,13 @@ Example:
 
 | Option | Description |
 |---|---|
+| Restore selection | Per-section + per-extension checkboxes (populated from the archive's manifest) |
 | Private key | Base64 private key for the archive's keypair (leave blank to use the local `config.php` key) |
 | Replace existing data | Required confirmation — the SQL dump replaces every bundled table |
+
+### Vendor extensions — composer reminder
+
+Bundled vendor extensions land back in `vendor/<vendor>/<package>` and `composer.json` / `composer.lock` are written to the project root. The destination still needs `composer install` (or `composer dump-autoload`) afterwards so the autoloader sees the restored packages and so any sub-dependencies are present; otherwise Flarum will fail to boot a vendor extension whose dependencies were never installed locally.
 
 ## Permissions
 
@@ -118,6 +129,7 @@ Example:
 | `DELETE` | `/api/backup/imports/{id}` | Cancel an in-progress import and wipe its tmp dir |
 | `GET` | `/api/backup/encryption/status` | Inspect encryption key status |
 | `POST` | `/api/backup/encryption/generate-keypair` | Generate a new encryption keypair (private half is shown ONCE) |
+| `GET` | `/api/backup/extensions` | List installed extensions (workbench + vendor) for the export-side picker |
 
 ## Archive format
 
@@ -144,6 +156,58 @@ Entry stream (encrypted or plain):
 ```
 
 The metadata header always travels in plaintext so the importer can decide how to handle the file (and prompt for the right private key) without committing to any decryption.
+
+### Logical name roots
+
+| Prefix | Restored to | Notes |
+|---|---|---|
+| `database.sql` | (replayed into MySQL) | Single SQL dump entry, type `1` |
+| `assets/<…>` | `public/assets/<…>` | Avatars, attachments, uploads |
+| `storage/<…>` | `storage/<…>` | Skipped during backup of `backups/` and `backup-tmp/` to avoid recursion |
+| `extensions/<id>/<…>` | original location of `<id>` | Mapped via the manifest entry — workbench extensions go to `workbench/<dirname>`, vendor extensions to `vendor/<vendor>/<package>` |
+| `project/composer.json` | `composer.json` | Only `composer.json` and `composer.lock` are accepted under `project/` — any other path is rejected |
+| `project/composer.lock` | `composer.lock` | |
+
+### Metadata header shape
+
+```jsonc
+{
+  "format_version": 1,
+  "created_at": "2026-05-09T12:34:56+00:00",
+  "flarum_version": "v2.0.0",
+  "php_version": "8.3.8",
+  "contents": ["db", "assets", "extensions"],
+  "source_url": "https://forum.example.com",
+  "manifest": {
+    "asset_count": 142,
+    "storage_count": 0,
+    "extension_count": 213,
+    "has_composer": true,
+    "extensions": [
+      {
+        "id": "ramon-verified",
+        "name": "ramon/verified",
+        "title": "Verified",
+        "version": "1.0.0",
+        "location": "vendor",
+        "relative": "vendor/ramon/verified",
+        "files": 123,
+        "bytes": 1048576
+      },
+      {
+        "id": "local-thing",
+        "name": "acme/local-thing",
+        "title": "Local Thing",
+        "version": "0.1.0",
+        "location": "workbench",
+        "relative": "workbench/local-thing",
+        "files": 90,
+        "bytes": 524288
+      }
+    ]
+  }
+}
+```
 
 ## Links
 
