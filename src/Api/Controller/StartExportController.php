@@ -37,6 +37,20 @@ class StartExportController implements RequestHandlerInterface
         $contents = is_array($body['contents'] ?? null) ? $body['contents'] : [];
         $encryption = is_array($body['encryption'] ?? null) ? $body['encryption'] : ['enabled' => false];
 
+        // `contents.extensions` is permissive on purpose:
+        //   true     → bundle every installed extension
+        //   false    → bundle none
+        //   string[] → bundle these specific extension ids
+        $extensions = $contents['extensions'] ?? false;
+        if (is_array($extensions)) {
+            $extensions = array_values(array_filter(array_map(
+                fn ($v) => is_string($v) ? $v : null,
+                $extensions
+            )));
+        } else {
+            $extensions = (bool) $extensions;
+        }
+
         $jobId = $this->generateJobId();
 
         $state = $this->job->start(
@@ -45,7 +59,7 @@ class StartExportController implements RequestHandlerInterface
                 'db'         => ! empty($contents['db']),
                 'assets'     => ! empty($contents['assets']),
                 'storage'    => ! empty($contents['storage']),
-                'extensions' => ! empty($contents['extensions']),
+                'extensions' => $extensions,
             ],
             [
                 'enabled'    => ! empty($encryption['enabled']),

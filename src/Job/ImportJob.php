@@ -214,7 +214,7 @@ class ImportJob
 
                     $accept = $this->shouldExtract($entry['name'], $entry['type'], $selection);
                     $dest = ($accept && $entry['type'] === Format::TYPE_FILE)
-                        ? $this->resolveDestination($entry['name'])
+                        ? $this->resolveDestination($entry['name'], $state)
                         : null;
 
                     // Open a sink: SQL dump file, target file on disk,
@@ -495,8 +495,20 @@ class ImportJob
             'assets'  => ! empty($selection['assets']),
             'storage' => ! empty($selection['storage']),
             'extensions' => $this->isExtensionAllowed($name, $selection['extensions'] ?? null),
+            // composer.json / composer.lock follow the extensions
+            // toggle: if the admin opted out of all extensions, they
+            // didn't ask to restore composer either.
+            'project' => $this->hasAnyExtensionSelected($selection),
             default   => true,
         };
+    }
+
+    private function hasAnyExtensionSelected(array $selection): bool
+    {
+        $ext = $selection['extensions'] ?? false;
+        if ($ext === true) return true;
+        if (is_array($ext) && count($ext) > 0) return true;
+        return false;
     }
 
     private function isExtensionAllowed(string $name, mixed $extSelection): bool
@@ -512,11 +524,49 @@ class ImportJob
     }
 
     /**
-     * Map a logical entry name like "assets/avatars/1.png" to the
-     * absolute filesystem path on this install. Returns null for any
-     * name that escapes the four whitelisted roots.
+     * Build a `extensionId → absolute base directory` map from the
+     * archive metadata. Used by `resolveDestination` to know where to
+     * restore vendor/ extensions vs workbench/ ones.
+     *
+     * Backwards compatible with the v1 manifest shape, where
+     * `manifest.extensions` was a flat `string[]` of workbench
+     * directory names. Those always restore to `workbench/<name>`.
+     *
+     * @return array<string, string>  id → absolute path
      */
-    private function resolveDestination(string $name): ?string
+    private function extensionDestinationMap(JobState $state): array
+    {
+        $meta = (array) $state->get('archive_meta');
+        $manifest = (array) ($meta['manifest'] ?? []);
+        $exts = (array) ($manifest['extensions'] ?? []);
+
+        $base = rtrim($this->appPaths->base, '/\\');
+        $map = [];
+        foreach ($exts as $ext) {
+            if (is_string($ext)) {
+                // v1 archive — dirname → workbench/<dirname>
+                $map[$ext] = $base.DIRECTORY_SEPARATOR.'workbench'.DIRECTORY_SEPARATOR.$ext;
+                continue;
+            }
+            if (! is_array($ext)) continue;
+            $id = (string) ($ext['id'] ?? '');
+            $rel = (string) ($ext['relative'] ?? '');
+            if ($id === '' || $rel === '') continue;
+            // Forbid funny stuff in the recorded path (we trust the
+            // meta header but it travelled across servers).
+            if (str_contains($rel, '..') || str_contains($rel, "\0")) continue;
+            $map[$id] = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $rel);
+        }
+        return $map;
+    }
+
+    /**
+     * Map a logical entry name like "assets/avatars/1.png" or
+     * "extensions/ramon-verified/extend.php" to the absolute path on
+     * this install. Returns null for any name that escapes the
+     * whitelisted roots, or for an unknown extension id.
+     */
+    private function resolveDestination(string $name, JobState $state): ?string
     {
         $name = ltrim($name, '/');
         if (str_contains($name, '..') || str_contains($name, "\0") || str_contains($name, '\\')) {
@@ -530,22 +580,43 @@ class ImportJob
         $rest = substr($name, $slash + 1);
         if ($rest === '' || $rest === false) return null;
 
-        $base = match ($root) {
-            'assets'     => rtrim($this->appPaths->public, '/\\').DIRECTORY_SEPARATOR.'assets',
-            'storage'    => rtrim($this->appPaths->storage, '/\\'),
-            'extensions' => $this->appPaths->base.DIRECTORY_SEPARATOR.'workbench',
-            default      => null,
-        };
+        if ($root === 'extensions') {
+            // For an entry like "extensions/<id>/<inner>", look up
+            // <id> in the manifest map to learn where this extension
+            // originally lived (workbench/<name> or vendor/<vendor>/<name>).
+            $cut = strpos($rest, '/');
+            if ($cut === false) return null;
+            $extId = substr($rest, 0, $cut);
+            $inner = substr($rest, $cut + 1);
+            if ($inner === '' || $inner === false) return null;
+
+            $map = $this->extensionDestinationMap($state);
+            $base = $map[$extId] ?? null;
+            if ($base === null) return null;
+        } elseif ($root === 'project') {
+            // Project-root files. Only composer.json / composer.lock
+            // are accepted here — any other path is rejected outright
+            // so a hostile archive can't drop, say, a `.htaccess` or
+            // a public/ override into the install.
+            if (! in_array($rest, ['composer.json', 'composer.lock'], true)) {
+                return null;
+            }
+            $base = rtrim($this->appPaths->base, '/\\');
+            $inner = $rest;
+        } else {
+            $base = match ($root) {
+                'assets'  => rtrim($this->appPaths->public, '/\\').DIRECTORY_SEPARATOR.'assets',
+                'storage' => rtrim($this->appPaths->storage, '/\\'),
+                default   => null,
+            };
+            $inner = $rest;
+        }
         if ($base === null) return null;
 
-        // The .. / NUL / backslash filters above already guarantee
-        // `$rest` is a relative path that stays inside `$base`. Just
-        // make sure the base directory exists so file writes don't
-        // need to mkdir per-entry.
         if (! is_dir($base)) {
             @mkdir($base, 0755, true);
         }
 
-        return $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $rest);
+        return $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
     }
 }

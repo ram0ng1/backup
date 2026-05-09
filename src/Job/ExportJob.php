@@ -9,6 +9,7 @@ use Ramon\Backup\Archive\ArchiveWriter;
 use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseDumper;
+use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
 use RuntimeException;
@@ -43,7 +44,8 @@ class ExportJob
         protected Paths $appPaths,
         protected ConnectionInterface $db,
         protected BackupCipher $cipher,
-        protected Config $config
+        protected Config $config,
+        protected Inventory $inventory
     ) {
     }
 
@@ -51,7 +53,11 @@ class ExportJob
      * Create a fresh export job, returning the new state. The caller
      * persists the JobState and pumps `runTick()` until phase=done.
      *
-     * @param array{db: bool, assets: bool, storage: bool, extensions: bool} $contents
+     * `contents.extensions` is permissive:
+     *   - bool      — true bundles every installed extension, false skips
+     *   - string[]  — bundle exactly these extension ids (workbench or vendor)
+     *
+     * @param array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>} $contents
      * @param array{enabled: bool, public_key?: string|null} $encryption
      * @param int|null $userId
      */
@@ -79,7 +85,9 @@ class ExportJob
                 'db'         => ! empty($contents['db']),
                 'assets'     => ! empty($contents['assets']),
                 'storage'    => ! empty($contents['storage']),
-                'extensions' => ! empty($contents['extensions']),
+                // Preserve the original shape so the scan phase can
+                // tell "all extensions" (true) apart from "this list".
+                'extensions' => $this->normaliseExtensionSelection($contents['extensions'] ?? false),
             ],
             'encryption'    => [
                 'enabled'    => $useEncryption,
@@ -165,15 +173,66 @@ class ExportJob
                 $storageBase.DIRECTORY_SEPARATOR.'backup-tmp',
             ]);
         }
-        if (! empty($contents['extensions'])) {
-            // Local extensions live in the workbench/ directory in the
-            // standard Flarum dev layout. vendor/ is composer-managed
-            // and excluded on purpose.
-            $base = realpath($this->appPaths->base.DIRECTORY_SEPARATOR.'workbench');
-            if ($base !== false) {
-                $this->collectFiles($base, 'extensions', $files, $totalBytes);
+        // Per-extension bundling. The selection drives WHICH
+        // extensions go in; the inventory drives WHERE they live
+        // (workbench/ for local dev, vendor/ for composer-managed).
+        // We bundle each extension's files under
+        //   extensions/<id>/...
+        // and record the original location in $bundledExts so the
+        // import side can put vendor extensions back into vendor/
+        // and workbench extensions back into workbench/.
+        $extSelection = $contents['extensions'] ?? false;
+        $bundledExts = [];
+
+        if ($extSelection !== false) {
+            $allExts = $this->inventory->list();
+            $wantAll = $extSelection === true;
+            $wantedIds = is_array($extSelection) ? array_flip($extSelection) : [];
+
+            foreach ($allExts as $ext) {
+                if (! $wantAll && ! isset($wantedIds[$ext['id']])) continue;
+
+                $beforeBytes = $totalBytes;
+                $beforeFiles = count($files);
+                $this->collectFiles($ext['path'], 'extensions/'.$ext['id'], $files, $totalBytes);
+
+                $bundledExts[] = [
+                    'id'       => $ext['id'],
+                    'name'     => $ext['name'],
+                    'title'    => $ext['title'],
+                    'version'  => $ext['version'],
+                    'location' => $ext['location'],
+                    // Original path on the source forum, relative to the
+                    // Flarum base. The import side restores into the same
+                    // path on the destination — vendor extensions land
+                    // back in vendor/, workbench extensions in workbench/.
+                    'relative' => $ext['relative'],
+                    'files'    => count($files) - $beforeFiles,
+                    'bytes'    => $totalBytes - $beforeBytes,
+                ];
             }
         }
+
+        $state->set('bundled_extensions', $bundledExts);
+
+        // composer.json + composer.lock travel alongside whenever the
+        // user is bundling extensions: vendor/ extensions are useless
+        // on the destination without the matching composer manifest
+        // (the next `composer install` would simply wipe them). The
+        // import side restores both to the project root.
+        $hasComposer = false;
+        if ($extSelection !== false) {
+            foreach (['composer.json', 'composer.lock'] as $rel) {
+                $abs = rtrim($this->appPaths->base, '/\\').DIRECTORY_SEPARATOR.$rel;
+                if (is_file($abs)) {
+                    $size = filesize($abs) ?: 0;
+                    $files[] = ['name' => 'project/'.$rel, 'absolute' => $abs, 'size' => $size];
+                    $totalBytes += $size;
+                    $hasComposer = true;
+                }
+            }
+        }
+        $state->set('has_composer', $hasComposer);
 
         $state->set('cursor', array_merge($state->get('cursor'), [
             'tables' => ! empty($contents['db']) ? $this->listTablesSafely() : [],
@@ -191,9 +250,16 @@ class ExportJob
             'asset_count'     => 0,
             'storage_count'   => 0,
             'extension_count' => 0,
-            'extensions'      => [],
+            // Rich per-extension descriptors so the import side knows
+            // where each one originally lived (workbench / vendor) and
+            // can restore to the correct spot.
+            'extensions'      => $bundledExts,
+            // Surface to the UI that composer.json / composer.lock
+            // are inside the archive — the import flow shows a small
+            // note since restoring them overwrites the destination's
+            // composer manifest.
+            'has_composer'    => $hasComposer,
         ];
-        $extDirs = [];
         foreach ($files as $f) {
             $slash = strpos($f['name'], '/');
             if ($slash === false) continue;
@@ -202,13 +268,8 @@ class ExportJob
             elseif ($root === 'storage')   $summary['storage_count']++;
             elseif ($root === 'extensions') {
                 $summary['extension_count']++;
-                $rest = substr($f['name'], $slash + 1);
-                $cut  = strpos($rest, '/');
-                $extDirs[$cut === false ? $rest : substr($rest, 0, $cut)] = true;
             }
         }
-        $summary['extensions'] = array_values(array_keys($extDirs));
-        sort($summary['extensions'], SORT_STRING);
         $state->set('manifest_summary', $summary);
 
         $progress = $state->get('progress');
@@ -636,6 +697,23 @@ class ExportJob
         $url = $this->config['url'] ?? '';
         if (! is_string($url)) return '';
         return rtrim($url, '/');
+    }
+
+    /**
+     * Normalise the user-provided extension selection to either `true`
+     * (everything), `false` (nothing), or a list of extension ids.
+     */
+    private function normaliseExtensionSelection(mixed $raw): bool|array
+    {
+        if (is_bool($raw)) return $raw;
+        if (is_array($raw)) {
+            $ids = array_values(array_filter(array_map(
+                fn ($v) => is_string($v) ? $v : null,
+                $raw
+            )));
+            return $ids;
+        }
+        return (bool) $raw;
     }
 
     private function detectFlarumVersion(): string

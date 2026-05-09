@@ -2,11 +2,23 @@ import app from 'flarum/admin/app';
 import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
 import Button from 'flarum/common/components/Button';
 import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
+import type Mithril from 'mithril';
 
 import { apiUrl, fmtBytes } from '../utils/api';
 
 export interface ExportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
+}
+
+interface ExtensionEntry {
+  id: string;
+  name: string;
+  title: string;
+  version: string;
+  location: 'workbench' | 'vendor' | 'unknown';
+  path: string;
+  relative: string;
+  enabled: boolean;
 }
 
 interface ExportProgress {
@@ -49,6 +61,14 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   protected includeStorage = false;
   protected includeExtensions = false;
 
+  // Per-extension selection. Loaded lazily when the user ticks
+  // "Extensions" for the first time so we don't fire an extra request
+  // for admins who never use the feature.
+  protected extensionsLoading = false;
+  protected extensionsLoaded = false;
+  protected extensions: ExtensionEntry[] = [];
+  protected extensionSelected: Record<string, boolean> = {};
+
   protected encryptionEnabled = false;
   protected encryptionUseExternal = false;
   protected externalPublicKey = '';
@@ -84,7 +104,15 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           {this.checkbox('db', () => this.includeDb, (v) => (this.includeDb = v))}
           {this.checkbox('assets', () => this.includeAssets, (v) => (this.includeAssets = v))}
           {this.checkbox('storage', () => this.includeStorage, (v) => (this.includeStorage = v))}
-          {this.checkbox('extensions', () => this.includeExtensions, (v) => (this.includeExtensions = v))}
+          {this.checkbox('extensions', () => this.includeExtensions, (v) => {
+            this.includeExtensions = v;
+            // Lazy-load the extension inventory the first time
+            // someone ticks the box. The list comes back fast (no
+            // disk walking — just metadata from the ExtensionManager).
+            if (v && !this.extensionsLoaded) this.loadExtensions();
+          })}
+
+          {this.includeExtensions && this.extensionList()}
         </fieldset>
 
         <fieldset className="BackupExport-fieldset">
@@ -144,6 +172,92 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         </div>
       </div>
     );
+  }
+
+  extensionList(): Mithril.Children {
+    if (this.extensionsLoading) {
+      return (
+        <div className="BackupExport-extLoading">
+          <LoadingIndicator />
+        </div>
+      );
+    }
+    if (!this.extensions.length) {
+      return <p className="helpText BackupExport-extEmpty">{trans('extensions_none')}</p>;
+    }
+
+    const groups: Record<string, ExtensionEntry[]> = { workbench: [], vendor: [], unknown: [] };
+    for (const ext of this.extensions) groups[ext.location]?.push(ext);
+
+    return (
+      <div className="BackupExport-extList">
+        <div className="BackupExport-extActions">
+          <button type="button" className="BackupExport-extLink" onclick={() => this.toggleAllExtensions(true)}>
+            {trans('extensions_select_all')}
+          </button>
+          <span> · </span>
+          <button type="button" className="BackupExport-extLink" onclick={() => this.toggleAllExtensions(false)}>
+            {trans('extensions_select_none')}
+          </button>
+        </div>
+
+        {/*
+          Filter out empty groups before mapping — Mithril rejects
+          mixed `[vnode-with-key, null, vnode-with-key]` arrays
+          ("In fragments, vnodes must either all have keys or none").
+        */}
+        {(['workbench', 'vendor', 'unknown'] as const)
+          .filter((loc) => groups[loc].length > 0)
+          .map((loc) => (
+            <div className="BackupExport-extGroup" key={loc}>
+              <div className="BackupExport-extGroupHeader">
+                {trans('extensions_group_' + loc)}{' '}
+                <span className="helpText">({groups[loc].length})</span>
+              </div>
+              {groups[loc].map((ext) => (
+                <label className="BackupExport-extRow" key={ext.id}>
+                  <input
+                    type="checkbox"
+                    checked={!!this.extensionSelected[ext.id]}
+                    onchange={(e: Event) => {
+                      this.extensionSelected[ext.id] = (e.target as HTMLInputElement).checked;
+                    }}
+                  />{' '}
+                  <span className="BackupExport-extTitle">{ext.title}</span>{' '}
+                  <code className="BackupExport-extName">{ext.name || ext.id}</code>
+                  <span className={`BackupExport-extTag BackupExport-extTag--${ext.location}`}>
+                    {trans('extensions_tag_' + ext.location)}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ))}
+      </div>
+    );
+  }
+
+  toggleAllExtensions(value: boolean) {
+    for (const ext of this.extensions) this.extensionSelected[ext.id] = value;
+  }
+
+  async loadExtensions() {
+    this.extensionsLoading = true;
+    try {
+      const res = await app.request<{ extensions: ExtensionEntry[] }>({
+        method: 'GET',
+        url: `${apiUrl()}/backup/extensions`,
+      });
+      this.extensions = res.extensions || [];
+      this.extensionsLoaded = true;
+      // Default: every extension ticked. The admin un-ticks the
+      // ones they don't want.
+      for (const ext of this.extensions) this.extensionSelected[ext.id] = true;
+    } catch {
+      app.alerts.show({ type: 'error' }, trans('extensions_load_failed'));
+    } finally {
+      this.extensionsLoading = false;
+      m.redraw();
+    }
   }
 
   checkbox(key: 'db' | 'assets' | 'storage' | 'extensions', get: () => boolean, set: (v: boolean) => void) {
@@ -231,6 +345,23 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   async start() {
     this.starting = true;
     try {
+      // The backend accepts `extensions` as bool OR string[]. When
+      // every box is checked we still send the array (explicit),
+      // unless the inventory hasn't even loaded yet — which means
+      // the admin ticked the section but never opened the list and
+      // implicitly wants "all".
+      let extensionsField: boolean | string[] = false;
+      if (this.includeExtensions) {
+        if (!this.extensionsLoaded) {
+          extensionsField = true;
+        } else {
+          const ids = Object.entries(this.extensionSelected)
+            .filter(([, v]) => v)
+            .map(([k]) => k);
+          extensionsField = ids;
+        }
+      }
+
       const res = await app.request<{ job_id: string; phase: string; message: string }>({
         method: 'POST',
         url: `${apiUrl()}/backup/exports`,
@@ -239,7 +370,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             db: this.includeDb,
             assets: this.includeAssets,
             storage: this.includeStorage,
-            extensions: this.includeExtensions,
+            extensions: extensionsField,
           },
           encryption: {
             enabled: this.encryptionEnabled,

@@ -10,6 +10,7 @@ use Ramon\Backup\Api\Controller\DownloadBackupController;
 use Ramon\Backup\Api\Controller\EncryptionStatusController;
 use Ramon\Backup\Api\Controller\GenerateKeypairController;
 use Ramon\Backup\Api\Controller\ListBackupsController;
+use Ramon\Backup\Api\Controller\ListExtensionsController;
 use Ramon\Backup\Api\Controller\StartExportController;
 use Ramon\Backup\Api\Controller\StartImportController;
 use Ramon\Backup\Api\Controller\TickExportController;
@@ -45,5 +46,7 @@ return [
         ->delete('/backup/imports/{id:[a-f0-9]+}',     'backup.import.cancel', CancelImportController::class)
 
         ->get('/backup/encryption/status',          'backup.encryption.status',   EncryptionStatusController::class)
-        ->post('/backup/encryption/generate-keypair','backup.encryption.generate', GenerateKeypairController::class),
+        ->post('/backup/encryption/generate-keypair','backup.encryption.generate', GenerateKeypairController::class)
+
+        ->get('/backup/extensions', 'backup.extensions.list', ListExtensionsController::class),
 ];

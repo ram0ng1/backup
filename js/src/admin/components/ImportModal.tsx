@@ -9,11 +9,24 @@ export interface ImportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
 }
 
+interface ArchiveExtensionEntry {
+  id: string;
+  name?: string;
+  title?: string;
+  version?: string;
+  location?: 'workbench' | 'vendor' | 'unknown';
+  relative?: string;
+  files?: number;
+}
+
 interface ArchiveManifest {
   asset_count?: number;
   storage_count?: number;
   extension_count?: number;
-  extensions?: string[];
+  // Older archives shipped extensions as a flat string[] of dirnames.
+  // New archives ship rich descriptors.
+  extensions?: string[] | ArchiveExtensionEntry[];
+  has_composer?: boolean;
 }
 
 interface InspectResult {
@@ -62,6 +75,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
   protected file: File | null = null;
   protected uploading = false;
+  protected uploadProgress = 0;
+  protected uploadIndeterminate = false;
   protected uploadError: string | null = null;
 
   protected inspect: InspectResult | null = null;
@@ -126,6 +141,29 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
         {this.uploadError && <div className="Alert Alert--error">{this.uploadError}</div>}
 
+        {this.uploading && (
+          <div className="BackupImport-uploadProgress">
+            <div className="BackupImport-bar">
+              <div
+                className={
+                  'BackupImport-bar-fill' +
+                  (this.uploadIndeterminate ? ' BackupImport-bar-fill--indeterminate' : '')
+                }
+                style={
+                  this.uploadIndeterminate
+                    ? undefined
+                    : { width: `${Math.max(2, this.uploadProgress)}%` }
+                }
+              />
+            </div>
+            <div className="BackupImport-uploadStatus helpText">
+              {this.uploadIndeterminate
+                ? trans('inspecting_archive')
+                : trans('uploading_pct', { pct: this.uploadProgress })}
+            </div>
+          </div>
+        )}
+
         <div className="Form-group">
           <Button
             className="Button Button--primary"
@@ -143,18 +181,21 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   async upload() {
     if (!this.file) return;
     this.uploading = true;
+    this.uploadProgress = 0;
+    this.uploadIndeterminate = false;
     this.uploadError = null;
 
-    const fd = new FormData();
-    fd.append('archive', this.file);
-
     try {
-      // app.request supports passing the body directly as FormData.
-      const res = await app.request<InspectResult>({
-        method: 'POST',
-        url: `${apiUrl()}/backup/imports`,
-        serialize: (raw: unknown) => raw,
-        body: fd,
+      // Use a raw XHR so we can show upload progress — Flarum's
+      // app.request (mithril's m.request) does not expose
+      // `xhr.upload.onprogress`. Once 100% has been sent the server
+      // still has to read the header + validate the archive, so we
+      // flip to an indeterminate "Inspecting…" state until the
+      // response comes back.
+      const res = await this.uploadWithProgress(this.file, (pct) => {
+        this.uploadProgress = pct;
+        if (pct >= 100) this.uploadIndeterminate = true;
+        m.redraw();
       });
       this.inspect = res;
 
@@ -167,17 +208,70 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       this.sectionStorage = contents.includes('storage');
       this.sectionExtensions = contents.includes('extensions');
 
+      // Normalise to {id} regardless of which manifest version the
+      // archive was packed with (string[] vs ArchiveExtensionEntry[]).
       const exts = res.meta.manifest?.extensions || [];
       this.extensionsByName = {};
-      for (const name of exts) this.extensionsByName[name] = true;
+      for (const e of exts) {
+        const id = typeof e === 'string' ? e : e.id;
+        if (id) this.extensionsByName[id] = true;
+      }
 
       this.stage = 'configure';
     } catch (e: any) {
-      this.uploadError = e?.response?.errors?.[0]?.detail || (trans('upload_failed') as string);
+      this.uploadError = e?.detail || (trans('upload_failed') as string);
     } finally {
       this.uploading = false;
       m.redraw();
     }
+  }
+
+  /**
+   * XHR-based upload with progress reporting. Flarum's session is
+   * cookie-based, so credentials carry automatically; we just need to
+   * forward the CSRF token the same way app.request does.
+   */
+  private uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
+    return new Promise<InspectResult>((resolve, reject) => {
+      const fd = new FormData();
+      fd.append('archive', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / Math.max(e.total, 1)) * 100));
+        }
+      });
+      xhr.upload.addEventListener('load', () => onProgress(100));
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as InspectResult);
+          } catch {
+            reject({ detail: trans('upload_failed') as string });
+          }
+        } else {
+          let detail: string | undefined;
+          try {
+            const body = JSON.parse(xhr.responseText);
+            detail = body?.errors?.[0]?.detail;
+          } catch {
+            // non-JSON error body — fall back to status text
+          }
+          reject({ detail: detail || `${xhr.status} ${xhr.statusText}` });
+        }
+      });
+      xhr.addEventListener('error', () => reject({ detail: trans('upload_failed') as string }));
+      xhr.addEventListener('abort', () => reject({ detail: 'aborted' }));
+
+      xhr.open('POST', `${apiUrl()}/backup/imports`, true);
+      xhr.withCredentials = true;
+      // CSRF token — Flarum exposes it on the `app.session`.
+      const csrf = (app as any).session?.csrfToken;
+      if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
+      xhr.send(fd);
+    });
   }
 
   // ────────────────────────────────────────── configure stage
@@ -277,7 +371,12 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const hasAssets = contents.includes('assets');
     const hasStorage = contents.includes('storage');
     const hasExtensions = contents.includes('extensions');
-    const extList = manifest.extensions || [];
+    const rawExtList = manifest.extensions || [];
+    // Normalise to a uniform shape so the renderer can stay simple,
+    // regardless of which manifest version the archive used.
+    const extList: ArchiveExtensionEntry[] = (rawExtList as Array<string | ArchiveExtensionEntry>).map((e) =>
+      typeof e === 'string' ? { id: e, location: 'workbench' as const } : e
+    );
 
     return (
       <fieldset className="BackupImport-fieldset">
@@ -296,18 +395,32 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
               for (const name of extList) this.extensionsByName[name] = v;
             }, manifest.extension_count)}
 
+            {this.sectionExtensions && manifest.has_composer && (
+              <div className="BackupImport-composerNote helpText">
+                <i className="icon fas fa-cube" /> {trans('extensions_composer_note')}
+              </div>
+            )}
+
             {this.sectionExtensions && extList.length > 0 && (
               <div className="BackupImport-extList">
-                {extList.map((name) => (
-                  <label className="BackupImport-extRow" key={name}>
+                {extList.map((ext) => (
+                  <label className="BackupImport-extRow" key={ext.id}>
                     <input
                       type="checkbox"
-                      checked={!!this.extensionsByName[name]}
+                      checked={!!this.extensionsByName[ext.id]}
                       onchange={(e: Event) => {
-                        this.extensionsByName[name] = (e.target as HTMLInputElement).checked;
+                        this.extensionsByName[ext.id] = (e.target as HTMLInputElement).checked;
                       }}
                     />{' '}
-                    <code>{name}</code>
+                    <span className="BackupImport-extTitle">{ext.title || ext.id}</span>{' '}
+                    {ext.name && ext.name !== ext.id && (
+                      <code className="BackupImport-extName">{ext.name}</code>
+                    )}
+                    {ext.location && (
+                      <span className={`BackupImport-extTag BackupImport-extTag--${ext.location}`}>
+                        {trans('extensions_tag_' + ext.location)}
+                      </span>
+                    )}
                   </label>
                 ))}
               </div>
@@ -417,15 +530,30 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           </div>
         )}
 
+        {isDone && this.sectionDb && (
+          <div className="Alert Alert--info BackupImport-reloadNote">
+            <i className="icon fas fa-info-circle" /> {trans('reload_required')}
+          </div>
+        )}
+
         <div className="Form-group BackupImport-progress-actions">
           {!isDone && !isError && (
             <Button className="Button" onclick={() => this.cancel()}>
               {trans('cancel_button')}
             </Button>
           )}
-          {(isDone || isError) && (
+          {isError && (
             <Button className="Button Button--primary" onclick={() => this.close()}>
               {trans('close_button')}
+            </Button>
+          )}
+          {isDone && (
+            <Button
+              className="Button Button--primary"
+              icon="fas fa-rotate"
+              onclick={() => window.location.reload()}
+            >
+              {trans('reload_button')}
             </Button>
           )}
         </div>
@@ -447,8 +575,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         m.redraw();
       }
       if (this.status?.phase === 'done') {
+        // Don't refresh the parent panel — when the backup includes
+        // the database, restoring it has just replaced the sessions
+        // table this admin is authenticated against. Any further API
+        // call from this stale session would fail (401 / CSRF) and
+        // surface as a confusing "Oops!" toast. The user clicks
+        // Reload below and gets a clean session.
         app.alerts.show({ type: 'success' }, trans('completed'));
-        this.attrs.onComplete();
+        if (!this.sectionDb) this.attrs.onComplete();
       }
     } finally {
       this.polling = false;
