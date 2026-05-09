@@ -4,7 +4,7 @@ import Button from 'flarum/common/components/Button';
 import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 import type Mithril from 'mithril';
 
-import { apiUrl, fmtBytes } from '../utils/api';
+import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
 
 export interface ExportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
@@ -243,17 +243,21 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   async loadExtensions() {
     this.extensionsLoading = true;
     try {
-      const res = await app.request<{ extensions: ExtensionEntry[] }>({
+      const res = await apiRequest<{ extensions: ExtensionEntry[] }>({
         method: 'GET',
         url: `${apiUrl()}/backup/extensions`,
+        surface: false,
       });
       this.extensions = res.extensions || [];
       this.extensionsLoaded = true;
       // Default: every extension ticked. The admin un-ticks the
       // ones they don't want.
       for (const ext of this.extensions) this.extensionSelected[ext.id] = true;
-    } catch {
-      app.alerts.show({ type: 'error' }, trans('extensions_load_failed'));
+    } catch (e) {
+      app.alerts.show(
+        { type: 'error' },
+        errorDetail(e, String(trans('extensions_load_failed')))
+      );
     } finally {
       this.extensionsLoading = false;
       m.redraw();
@@ -362,7 +366,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         }
       }
 
-      const res = await app.request<{ job_id: string; phase: string; message: string }>({
+      const res = await apiRequest<{ job_id: string; phase: string; message: string }>({
         method: 'POST',
         url: `${apiUrl()}/backup/exports`,
         body: {
@@ -377,6 +381,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             public_key: this.encryptionUseExternal ? this.externalPublicKey.trim() : null,
           },
         },
+        surface: false,
       });
 
       this.jobId = res.job_id;
@@ -391,7 +396,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       this.pump();
     } catch (e) {
       this.starting = false;
-      app.alerts.show({ type: 'error' }, trans('start_failed'));
+      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('start_failed'))));
       m.redraw();
     }
   }
@@ -402,12 +407,27 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     try {
       // Sequential ticks — each /tick call performs ~4MB of work.
       while (this.jobId && this.status && this.status.phase !== 'done' && this.status.phase !== 'error') {
-        const res = await app.request<ExportProgress>({
-          method: 'POST',
-          url: `${apiUrl()}/backup/exports/${this.jobId}/tick`,
-        });
-        this.status = res;
-        m.redraw();
+        try {
+          const res = await apiRequest<ExportProgress>({
+            method: 'POST',
+            url: `${apiUrl()}/backup/exports/${this.jobId}/tick`,
+            surface: false,
+          });
+          this.status = res;
+          m.redraw();
+        } catch (e) {
+          // Convert tick failures into a synthetic error phase so the
+          // existing UI shows the close button and a meaningful
+          // message instead of freezing on the last %.
+          const detail = errorDetail(e, String(trans('phase_error_network')));
+          this.status = {
+            ...(this.status as ExportProgress),
+            phase: 'error',
+            message: detail,
+          };
+          m.redraw();
+          break;
+        }
       }
       if (this.status?.phase === 'done') {
         app.alerts.show({ type: 'success' }, trans('completed'));
@@ -421,12 +441,16 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   async cancel() {
     if (!this.jobId) return;
     try {
-      await app.request({
+      await apiRequest({
         method: 'DELETE',
         url: `${apiUrl()}/backup/exports/${this.jobId}`,
+        surface: false,
       });
-    } catch {
-      /* best effort */
+    } catch (e) {
+      // The job may still be holding a server-side lock — let the user
+      // know so they understand if the next export complains.
+      console.warn('[backup] export cancel failed', e);
+      app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }
     this.close();
   }

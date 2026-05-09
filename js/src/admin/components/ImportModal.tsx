@@ -3,7 +3,10 @@ import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
 import Button from 'flarum/common/components/Button';
 import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 
-import { apiUrl, fmtBytes } from '../utils/api';
+import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
+
+/** Abort the upload XHR if no progress event fires for this long. */
+const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
 
 export interface ImportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
@@ -222,7 +225,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
       this.stage = 'configure';
     } catch (e: any) {
-      this.uploadError = e?.detail || (trans('upload_failed') as string);
+      console.error('[backup] archive upload failed', e);
+      this.uploadError = errorDetail(e, String(trans('upload_failed')));
     } finally {
       this.uploading = false;
       m.redraw();
@@ -233,6 +237,11 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
    * XHR-based upload with progress reporting. Flarum's session is
    * cookie-based, so credentials carry automatically; we just need to
    * forward the CSRF token the same way app.request does.
+   *
+   * We don't set `xhr.timeout` — large archives over slow links are
+   * legitimate. Instead we watch for *idle* sockets (no progress event
+   * for {@link UPLOAD_IDLE_TIMEOUT_MS} ms) and abort, which covers the
+   * "TCP didn't notice the network died" failure mode.
    */
   private uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
     return new Promise<InspectResult>((resolve, reject) => {
@@ -240,14 +249,32 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       fd.append('archive', file);
 
       const xhr = new XMLHttpRequest();
+      let lastProgress = Date.now();
+      const idleTimer = setInterval(() => {
+        if (Date.now() - lastProgress > UPLOAD_IDLE_TIMEOUT_MS) {
+          clearInterval(idleTimer);
+          xhr.abort();
+        }
+      }, 5_000);
+      const stopIdleTimer = () => clearInterval(idleTimer);
+
       xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        lastProgress = Date.now();
         if (e.lengthComputable) {
           onProgress(Math.round((e.loaded / Math.max(e.total, 1)) * 100));
         }
       });
-      xhr.upload.addEventListener('load', () => onProgress(100));
+      xhr.upload.addEventListener('load', () => {
+        lastProgress = Date.now();
+        onProgress(100);
+      });
+      xhr.upload.addEventListener('error', () => {
+        stopIdleTimer();
+        reject({ detail: trans('upload_failed') as string });
+      });
 
       xhr.addEventListener('load', () => {
+        stopIdleTimer();
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             resolve(JSON.parse(xhr.responseText) as InspectResult);
@@ -265,8 +292,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           reject({ detail: detail || `${xhr.status} ${xhr.statusText}` });
         }
       });
-      xhr.addEventListener('error', () => reject({ detail: trans('upload_failed') as string }));
-      xhr.addEventListener('abort', () => reject({ detail: 'aborted' }));
+      xhr.addEventListener('error', () => {
+        stopIdleTimer();
+        reject({ detail: trans('upload_failed') as string });
+      });
+      xhr.addEventListener('abort', () => {
+        stopIdleTimer();
+        reject({ detail: trans('upload_idle_timeout') as string });
+      });
 
       xhr.open('POST', `${apiUrl()}/backup/imports`, true);
       xhr.withCredentials = true;
@@ -479,9 +512,10 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     this.starting = true;
 
     try {
-      const res = await app.request<{ phase: string; message: string }>({
+      const res = await apiRequest<{ phase: string; message: string }>({
         method: 'POST',
         url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/start`,
+        surface: false,
         body: {
           private_key: this.privateKey.trim() || null,
           confirm_replace: this.confirmReplace,
@@ -502,9 +536,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       };
       m.redraw();
       this.pump();
-    } catch (e: any) {
-      const msg = e?.response?.errors?.[0]?.detail || (trans('start_failed') as string);
-      app.alerts.show({ type: 'error' }, msg);
+    } catch (e) {
+      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('start_failed'))));
     } finally {
       this.starting = false;
     }
@@ -612,12 +645,28 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
     try {
       while (this.inspect && this.status && this.status.phase !== 'done' && this.status.phase !== 'error') {
-        const res = await app.request<ImportProgress>({
-          method: 'POST',
-          url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/tick`,
-        });
-        this.status = res;
-        m.redraw();
+        try {
+          const res = await app.request<ImportProgress>({
+            method: 'POST',
+            url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/tick`,
+          });
+          this.status = res;
+          m.redraw();
+        } catch (e: any) {
+          // Restore is more dangerous to leave hanging than export —
+          // the server may still be mid-write. Surface a synthetic
+          // error phase, and explicitly tell the user to verify
+          // server state before retrying.
+          console.error('[backup] import tick failed', e);
+          const detail = errorDetail(e, String(trans('phase_error_network')));
+          this.status = {
+            ...this.status!,
+            phase: 'error',
+            message: detail,
+          };
+          m.redraw();
+          break;
+        }
       }
       if (this.status?.phase === 'done') {
         // Don't refresh the parent panel — when the backup includes
@@ -641,8 +690,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         method: 'DELETE',
         url: `${apiUrl()}/backup/imports/${this.inspect.job_id}`,
       });
-    } catch {
-      /* best effort */
+    } catch (e) {
+      console.error('[backup] import cancel failed', e);
+      app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }
     this.close();
   }

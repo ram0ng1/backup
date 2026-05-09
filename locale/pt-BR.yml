@@ -1,5 +1,13 @@
 ramon-backup:
   admin:
+    errors:
+      generic: "Algo deu errado. Tente novamente."
+      boundary_title: "Não foi possível renderizar esta seção."
+      boundary_body: "Ocorreu um erro inesperado. O restante do painel continua funcionando — tente novamente, ou recarregue a página se o problema persistir."
+      boundary_retry: "Tentar novamente"
+      confirm_default: "Confirmar"
+      cancel_default: "Cancelar"
+
     permissions:
       manage_label: "Gerenciar backups"
 
@@ -24,15 +32,22 @@ ramon-backup:
       plain: "Sem criptografia"
       download_title: "Baixar"
       delete_title: "Excluir"
+      confirm_delete_title: "Excluir este backup?"
       confirm_delete: "Excluir este backup permanentemente? O arquivo .flarum será removido do servidor."
       deleted: "Backup excluído."
       delete_failed: "Não foi possível excluir o backup."
+      load_failed: "Não foi possível carregar a lista de backups."
+      retry: "Tentar novamente"
 
     encryption:
       section_title: "Criptografia"
       section_help: "Criptografe novos backups com um par de chaves assimétrico. A chave pública fica no banco de dados; a privada DEVE ser colada no config.php — o processo web nunca recebe uma chave que não foi explicitamente configurada."
+      clipboard_unavailable: "Seu navegador não permite copiar para a área de transferência. Selecione o valor manualmente."
+      clipboard_failed: "A cópia falhou — o navegador bloqueou o acesso à área de transferência. Selecione o valor manualmente."
       status:
         unknown: "Não foi possível carregar o status da criptografia."
+        load_failed: "Não foi possível carregar o status da criptografia do servidor."
+        retry: "Tentar novamente"
         libsodium_missing: "libsodium não está disponível neste servidor. A criptografia não pode ser habilitada."
         healthy: "Criptografia configurada. Novos backups serão criptografados automaticamente quando você marcar 'criptografar' no modal de exportação."
         not_setup: "Nenhum par de chaves foi gerado. Backups serão salvos em texto puro a menos que você ative a criptografia por exportação."
@@ -46,6 +61,7 @@ ramon-backup:
         private_missing_body: "Foi gerada uma chave pública, mas a chave privada correspondente não está no seu config.php. Backups criptografados existentes não serão descriptografados aqui até que a chave privada seja restaurada."
       actions:
         generate: "Gerar par de chaves"
+        generate_failed: "Não foi possível gerar o par de chaves."
       public_key:
         label: "Chave pública atual"
         copy_title: "Copiar chave pública"
@@ -98,6 +114,7 @@ ramon-backup:
       start_button: "Iniciar backup"
       start_failed: "Não foi possível iniciar a exportação."
       cancel_button: "Cancelar"
+      cancel_failed_warn: "O modal foi fechado, mas o servidor pode ainda estar segurando o lock do job de exportação. Verifique a lista de backups em instantes — se houver um job preso, tente de novo ou contate o suporte."
       close_button: "Fechar"
       completed: "Backup criado."
       files_count: "{done} / {total} arquivos"
@@ -107,6 +124,7 @@ ramon-backup:
       phase_finalize: "Finalizando…"
       phase_done: "Pronto"
       phase_error: "Erro"
+      phase_error_network: "Conexão com o servidor foi perdida durante o backup. O job pode ainda estar rodando no servidor — verifique a lista de backups em instantes."
 
     import_modal:
       title: "Importar backup"
@@ -115,6 +133,7 @@ ramon-backup:
       choose_file: "Clique para escolher um arquivo .flarum"
       upload_button: "Enviar e inspecionar"
       upload_failed: "Falha no upload."
+      upload_idle_timeout: "O upload travou (nenhum dado enviado por mais de um minuto). Verifique sua conexão e tente novamente."
       uploading_pct: "Enviando… {pct}%"
       inspecting_archive: "Inspecionando arquivo…"
       extensions_tag_workbench: "workbench"
@@ -143,6 +162,7 @@ ramon-backup:
       start_button: "Restaurar"
       start_failed: "Não foi possível iniciar a restauração."
       cancel_button: "Cancelar"
+      cancel_failed_warn: "O modal foi fechado, mas o servidor pode ainda estar aplicando alterações. Verifique o estado do servidor antes de tentar de novo."
       close_button: "Fechar"
       completed: "Restauração concluída."
       reload_required: "Os dados do fórum foram substituídos. Recarregue a página para continuar com uma sessão nova — seu login anterior pode ter sido substituído também."
@@ -161,4 +181,5 @@ ramon-backup:
       phase_finalize: "Finalizando…"
       phase_done: "Pronto"
       phase_error: "Erro"
+      phase_error_network: "Conexão com o servidor foi perdida durante a restauração. O servidor pode ainda estar gravando — aguarde um momento e verifique o estado do banco antes de tentar de novo."
       url_rewrite_note: "URLs no banco que apontam para o servidor de origem serão reescritas automaticamente para a URL deste servidor."

@@ -6,7 +6,7 @@ import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 import extractText from 'flarum/common/utils/extractText';
 import type Mithril from 'mithril';
 
-import { apiUrl } from '../utils/api';
+import { apiRequest, apiUrl, errorDetail } from '../utils/api';
 
 const trans = (key: string, params?: Record<string, unknown>) =>
   app.translator.trans(`ramon-backup.admin.encryption.${key}`, params ?? {});
@@ -69,15 +69,24 @@ class KeypairRevealModal extends Modal<RevealAttrs> {
   }
 
   copy(snippet: string) {
-    if (!navigator.clipboard) return;
-    navigator.clipboard.writeText(snippet).then(() => {
-      this.copied = true;
-      m.redraw();
-      setTimeout(() => {
-        this.copied = false;
+    if (!navigator.clipboard) {
+      app.alerts.show({ type: 'error' }, trans('clipboard_unavailable'));
+      return;
+    }
+    navigator.clipboard
+      .writeText(snippet)
+      .then(() => {
+        this.copied = true;
         m.redraw();
-      }, 2000);
-    });
+        setTimeout(() => {
+          this.copied = false;
+          m.redraw();
+        }, 2000);
+      })
+      .catch((err) => {
+        console.error('[backup] clipboard writeText failed', err);
+        app.alerts.show({ type: 'error' }, trans('clipboard_failed'));
+      });
   }
 }
 
@@ -134,17 +143,20 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
     m.redraw();
     try {
       await this.attrs.onConfirm();
+      this.hide();
     } catch {
-      /* parent surfaces errors */
+      // Parent already showed an error toast — keep the modal open so
+      // the user can retry without re-acknowledging the warning.
+      this.submitting = false;
+      m.redraw();
     }
-    this.submitting = false;
-    this.hide();
   }
 }
 
 export default class EncryptionCard extends Component<ComponentAttrs> {
   protected status: EncryptionStatus | null = null;
-  protected loading = true;
+  protected loadState: 'loading' | 'ok' | 'error' = 'loading';
+  protected loadError: string | null = null;
   protected publicCopied = false;
 
   oninit(vnode: Mithril.Vnode<ComponentAttrs, this>) {
@@ -160,7 +172,21 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
           <p className="helpText">{trans('section_help')}</p>
         </header>
 
-        {this.loading ? <LoadingIndicator /> : this.body()}
+        {this.loadState === 'loading' && <LoadingIndicator />}
+        {this.loadState === 'error' && (
+          <div className="Alert Alert--error BackupEncryption-loadError">
+            <p>{trans('status.load_failed')}</p>
+            {this.loadError && (
+              <p className="helpText">
+                <code>{this.loadError}</code>
+              </p>
+            )}
+            <Button className="Button" icon="fas fa-rotate" onclick={() => this.refresh()}>
+              {trans('status.retry')}
+            </Button>
+          </div>
+        )}
+        {this.loadState === 'ok' && this.body()}
       </section>
     );
   }
@@ -252,44 +278,66 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
   }
 
   copyPublic(publicKey: string) {
-    if (!publicKey || !navigator.clipboard) return;
-    navigator.clipboard.writeText(publicKey).then(() => {
-      this.publicCopied = true;
-      m.redraw();
-      setTimeout(() => {
-        this.publicCopied = false;
+    if (!publicKey) return;
+    if (!navigator.clipboard) {
+      app.alerts.show({ type: 'error' }, trans('clipboard_unavailable'));
+      return;
+    }
+    navigator.clipboard
+      .writeText(publicKey)
+      .then(() => {
+        this.publicCopied = true;
         m.redraw();
-      }, 2000);
-    });
+        setTimeout(() => {
+          this.publicCopied = false;
+          m.redraw();
+        }, 2000);
+      })
+      .catch((err) => {
+        console.error('[backup] clipboard writeText failed', err);
+        app.alerts.show({ type: 'error' }, trans('clipboard_failed'));
+      });
   }
 
   refresh(): Promise<void> {
-    this.loading = true;
-    return app
-      .request<EncryptionStatus>({ method: 'GET', url: `${apiUrl()}/backup/encryption/status` })
+    this.loadState = 'loading';
+    this.loadError = null;
+    return apiRequest<EncryptionStatus>({
+      method: 'GET',
+      url: `${apiUrl()}/backup/encryption/status`,
+      surface: false,
+    })
       .then((res) => {
         this.status = res;
+        this.loadState = 'ok';
       })
-      .catch(() => {
+      .catch((e) => {
         this.status = null;
+        this.loadState = 'error';
+        this.loadError = errorDetail(e);
       })
       .then(() => {
-        this.loading = false;
         m.redraw();
       });
   }
 
   async generate(acknowledgeLoss: boolean) {
-    const res = await app.request<{ public_key: string; private_key: string; config_key: string }>({
-      method: 'POST',
-      url: `${apiUrl()}/backup/encryption/generate-keypair`,
-      body: { acknowledge_loss: acknowledgeLoss },
-    });
-    await this.refresh();
-    app.modal.show(KeypairRevealModal, {
-      privateKey: res.private_key,
-      configKey: res.config_key,
-    });
+    try {
+      const res = await apiRequest<{ public_key: string; private_key: string; config_key: string }>({
+        method: 'POST',
+        url: `${apiUrl()}/backup/encryption/generate-keypair`,
+        body: { acknowledge_loss: acknowledgeLoss },
+        surface: false,
+      });
+      await this.refresh();
+      app.modal.show(KeypairRevealModal, {
+        privateKey: res.private_key,
+        configKey: res.config_key,
+      });
+    } catch (e) {
+      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('actions.generate_failed'))));
+      throw e;
+    }
   }
 
   openRegenerate() {

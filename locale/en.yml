@@ -1,5 +1,13 @@
 ramon-backup:
   admin:
+    errors:
+      generic: "Something went wrong. Try again."
+      boundary_title: "Could not render this section."
+      boundary_body: "An unexpected error occurred. The rest of the panel still works — try retrying, or reload the page if the issue persists."
+      boundary_retry: "Try again"
+      confirm_default: "Confirm"
+      cancel_default: "Cancel"
+
     permissions:
       manage_label: "Manage backups"
 
@@ -24,15 +32,22 @@ ramon-backup:
       plain: "Plain"
       download_title: "Download"
       delete_title: "Delete"
+      confirm_delete_title: "Delete this backup?"
       confirm_delete: "Delete this backup permanently? The .flarum file will be removed from the server."
       deleted: "Backup deleted."
       delete_failed: "Could not delete the backup."
+      load_failed: "Could not load the backup list."
+      retry: "Retry"
 
     encryption:
       section_title: "Encryption"
       section_help: "Encrypt new backups with an asymmetric keypair. The public key lives in the database, the private key MUST be pasted into config.php — the web process never holds a key it has not been told."
+      clipboard_unavailable: "Your browser does not allow copying to the clipboard. Select the value manually."
+      clipboard_failed: "Copy failed — your browser blocked clipboard access. Select the value manually."
       status:
         unknown: "Could not load encryption status."
+        load_failed: "Could not load encryption status from the server."
+        retry: "Retry"
         libsodium_missing: "libsodium is not available on this server. Encryption cannot be enabled."
         healthy: "Encryption is configured. New backups will be encrypted automatically when you tick 'encrypt' in the export modal."
         not_setup: "No encryption keypair has been generated yet. Backups will be saved in plain form unless you opt in per-export."
@@ -46,6 +61,7 @@ ramon-backup:
         private_missing_body: "A public key was generated but the matching private key is not in your config.php. Existing encrypted backups will not decrypt here until the private key is restored."
       actions:
         generate: "Generate keypair"
+        generate_failed: "Could not generate the keypair."
       public_key:
         label: "Current public key"
         copy_title: "Copy public key"
@@ -98,6 +114,7 @@ ramon-backup:
       start_button: "Start backup"
       start_failed: "Could not start the export."
       cancel_button: "Cancel"
+      cancel_failed_warn: "Modal closed, but the server may still be holding the export job lock. Check the backup list shortly — if a stale job persists, retry or contact support."
       close_button: "Close"
       completed: "Backup created."
       files_count: "{done} / {total} files"
@@ -107,6 +124,7 @@ ramon-backup:
       phase_finalize: "Finalising…"
       phase_done: "Done"
       phase_error: "Error"
+      phase_error_network: "Lost connection to the server during the backup. The job may still be running on the server — check the backup list shortly."
 
     import_modal:
       title: "Import a backup"
@@ -115,6 +133,7 @@ ramon-backup:
       choose_file: "Click to choose a .flarum file"
       upload_button: "Upload and inspect"
       upload_failed: "Upload failed."
+      upload_idle_timeout: "The upload stalled (no data sent for over a minute). Check your network and try again."
       uploading_pct: "Uploading… {pct}%"
       inspecting_archive: "Inspecting archive…"
       extensions_tag_workbench: "workbench"
@@ -143,6 +162,7 @@ ramon-backup:
       start_button: "Restore"
       start_failed: "Could not start the restore."
       cancel_button: "Cancel"
+      cancel_failed_warn: "Modal closed, but the server may still be applying changes. Verify the server state before retrying."
       close_button: "Close"
       completed: "Restore complete."
       reload_required: "The forum data has been replaced. Reload the page to continue with a fresh session — your previous login may have been replaced too."
@@ -161,4 +181,5 @@ ramon-backup:
       phase_finalize: "Finalising…"
       phase_done: "Done"
       phase_error: "Error"
+      phase_error_network: "Lost connection to the server during restore. The server may still be writing — wait a moment and check the database state before retrying."
       url_rewrite_note: "URLs in the database referencing the source server will be rewritten to this server's URL automatically."
