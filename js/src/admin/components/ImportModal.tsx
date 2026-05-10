@@ -8,6 +8,20 @@ import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
 /** Abort the upload XHR if no progress event fires for this long. */
 const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
 
+/**
+ * Fallback chunk size if /backup/imports init doesn't return one.
+ * Server-recommended is 4 MB (see UploadImportController::RECOMMENDED_CHUNK_BYTES).
+ */
+const FALLBACK_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/**
+ * How many times to retry a single failed chunk before giving up on
+ * the whole upload. Each retry uses the same offset so it overwrites
+ * (idempotent). Two retries cover a transient hiccup without
+ * spinning forever on a real outage.
+ */
+const CHUNK_RETRY_LIMIT = 2;
+
 export interface ImportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
 }
@@ -234,21 +248,78 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   /**
-   * XHR-based upload with progress reporting. Flarum's session is
-   * cookie-based, so credentials carry automatically; we just need to
-   * forward the CSRF token the same way app.request does.
+   * Chunked upload + inspect.
    *
-   * We don't set `xhr.timeout` — large archives over slow links are
-   * legitimate. Instead we watch for *idle* sockets (no progress event
-   * for {@link UPLOAD_IDLE_TIMEOUT_MS} ms) and abort, which covers the
-   * "TCP didn't notice the network died" failure mode.
+   * Single multipart POSTs of multi-GB archives reliably hit server
+   * caps (`upload_max_filesize`, `post_max_size`, nginx
+   * `client_max_body_size`, `memory_limit` during multipart parsing)
+   * and surface as 500s. Instead we do three small requests:
+   *
+   *   1. POST /backup/imports                — init, gets job_id + chunk_size
+   *   2. POST /backup/imports/{id}/chunk*    — append each slice (loop)
+   *   3. POST /backup/imports/{id}/inspect   — finalise, return meta
+   *
+   * Progress is computed from `bytesSent / file.size` across all chunk
+   * requests so the bar advances smoothly through the entire file
+   * even though each individual request only carries a few MB.
    */
-  private uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
-    return new Promise<InspectResult>((resolve, reject) => {
-      const fd = new FormData();
-      fd.append('archive', file);
+  private async uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
+    // ─── 1. init ──────────────────────────────────────────────────
+    const init = await apiRequest<{ job_id: string; chunk_size: number }>({
+      method: 'POST',
+      url: `${apiUrl()}/backup/imports`,
+      body: { filename: file.name, size: file.size },
+      surface: false,
+    });
 
+    const jobId = init.job_id;
+    const chunkSize = init.chunk_size > 0 ? init.chunk_size : FALLBACK_CHUNK_BYTES;
+
+    // ─── 2. chunk loop ────────────────────────────────────────────
+    let offset = 0;
+    while (offset < file.size) {
+      const end = Math.min(offset + chunkSize, file.size);
+      const slice = file.slice(offset, end);
+
+      let attempt = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await this.sendChunk(jobId, offset, slice);
+          break;
+        } catch (e) {
+          attempt++;
+          if (attempt > CHUNK_RETRY_LIMIT) throw e;
+          // Back off briefly before retrying — gives a transient
+          // hiccup a moment to clear without spamming the server.
+          await new Promise((r) => setTimeout(r, 750 * attempt));
+        }
+      }
+
+      offset = end;
+      const pct = Math.min(99, Math.round((offset / file.size) * 100));
+      onProgress(pct);
+    }
+
+    // ─── 3. inspect ───────────────────────────────────────────────
+    onProgress(100);
+    return apiRequest<InspectResult>({
+      method: 'POST',
+      url: `${apiUrl()}/backup/imports/${jobId}/inspect`,
+      surface: false,
+    });
+  }
+
+  /**
+   * Single-chunk upload as a raw octet-stream POST. We use XHR
+   * (rather than fetch) so the per-chunk idle timeout works the
+   * same way it did for the old monolithic upload, and so we can
+   * pull a detailed error message off any non-2xx response body.
+   */
+  private sendChunk(jobId: string, offset: number, slice: Blob): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+
       let lastProgress = Date.now();
       const idleTimer = setInterval(() => {
         if (Date.now() - lastProgress > UPLOAD_IDLE_TIMEOUT_MS) {
@@ -258,36 +329,20 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       }, 5_000);
       const stopIdleTimer = () => clearInterval(idleTimer);
 
-      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+      xhr.upload.addEventListener('progress', () => {
         lastProgress = Date.now();
-        if (e.lengthComputable) {
-          onProgress(Math.round((e.loaded / Math.max(e.total, 1)) * 100));
-        }
-      });
-      xhr.upload.addEventListener('load', () => {
-        lastProgress = Date.now();
-        onProgress(100);
-      });
-      xhr.upload.addEventListener('error', () => {
-        stopIdleTimer();
-        reject({ detail: trans('upload_failed') as string });
       });
 
       xhr.addEventListener('load', () => {
         stopIdleTimer();
         if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            resolve(JSON.parse(xhr.responseText) as InspectResult);
-          } catch {
-            reject({ detail: trans('upload_failed') as string });
-          }
+          resolve();
         } else {
           let detail: string | undefined;
           try {
-            const body = JSON.parse(xhr.responseText);
-            detail = body?.errors?.[0]?.detail;
+            detail = JSON.parse(xhr.responseText)?.errors?.[0]?.detail;
           } catch {
-            // non-JSON error body — fall back to status text
+            /* non-JSON body */
           }
           reject({ detail: detail || `${xhr.status} ${xhr.statusText}` });
         }
@@ -301,12 +356,13 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         reject({ detail: trans('upload_idle_timeout') as string });
       });
 
-      xhr.open('POST', `${apiUrl()}/backup/imports`, true);
+      xhr.open('POST', `${apiUrl()}/backup/imports/${jobId}/chunk`, true);
       xhr.withCredentials = true;
-      // CSRF token — Flarum exposes it on the `app.session`.
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-Chunk-Offset', String(offset));
       const csrf = (app as any).session?.csrfToken;
       if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
-      xhr.send(fd);
+      xhr.send(slice);
     });
   }
 
