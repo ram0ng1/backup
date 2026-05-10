@@ -67,6 +67,30 @@
   word-break: break-all;
 }
 
+// "Targeted at <engine>" badge — only appears for cross-engine
+// backups so the row stays clean for the common case.
+.BackupList-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 159, 64, 0.18);
+  color: var(--text-color, currentColor);
+  border: 1px solid rgba(255, 159, 64, 0.45);
+
+  .icon {
+    font-size: 10px;
+  }
+}
+.BackupList-target--mysql    { background: rgba(0, 117, 143, 0.18); border-color: rgba(0, 117, 143, 0.45); }
+.BackupList-target--mariadb  { background: rgba(112, 50, 100, 0.18); border-color: rgba(112, 50, 100, 0.45); }
+.BackupList-target--postgres { background: rgba(51, 103, 145, 0.20); border-color: rgba(51, 103, 145, 0.45); }
+.BackupList-target--sqlite   { background: rgba(7, 64, 80, 0.18); border-color: rgba(7, 64, 80, 0.45); }
+
 .BackupList-tag {
   display: inline-block;
   margin: 0 4px 2px 0;
@@ -377,6 +401,37 @@
 .BackupExport-progress-actions,
 .BackupImport-progress-actions {
   text-align: right;
+}
+
+// Lossy-translation warnings — visible whenever the introspector
+// flags a column that doesn't fully round-trip (generated columns,
+// SET, spatial types, unrecognised engine-specific types).
+.BackupExport-warnings {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgba(255, 159, 64, 0.10);
+  border: 1px solid rgba(255, 159, 64, 0.45);
+}
+.BackupExport-warnings-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+
+  .icon {
+    color: #d97706;
+    margin-right: 4px;
+  }
+}
+.BackupExport-warnings-list {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.5;
+
+  li {
+    margin-bottom: 4px;
+    word-break: break-word;
+  }
 }
 
 // ─── Import modal ────────────────────────────────────────────────────

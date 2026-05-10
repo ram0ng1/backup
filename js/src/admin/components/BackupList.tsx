@@ -14,9 +14,23 @@ export interface BackupRow {
   contents: string[];
   flarum_version: string | null;
   php_version: string | null;
+  /**
+   * Engine the SQL dump targets. NULL = same as source (a regular
+   * backup of this install). Anything else (mysql, mariadb, postgres,
+   * sqlite) means the dump was retargeted at export time and is
+   * expected to be restored onto that engine.
+   */
+  target_dialect: string | null;
   created_at: string | null;
   created_by: number | null;
 }
+
+const DIALECT_LABEL: Record<string, string> = {
+  mysql:    'MySQL',
+  mariadb:  'MariaDB',
+  postgres: 'PostgreSQL',
+  sqlite:   'SQLite',
+};
 
 export interface BackupListAttrs extends ComponentAttrs {
   backups: BackupRow[];
@@ -54,6 +68,18 @@ export default class BackupList extends Component<BackupListAttrs> {
                   {b.created_at ? humanTime(b.created_at) : '—'}
                 </div>
                 <div className="BackupList-filename">{b.filename}</div>
+                {b.target_dialect && (
+                  // Only shown when the admin retargeted the dump at
+                  // export time — same-engine backups have a NULL
+                  // target_dialect and don't need the visual noise.
+                  <div
+                    className={`BackupList-target BackupList-target--${b.target_dialect}`}
+                    title={String(trans('target_tooltip', { engine: DIALECT_LABEL[b.target_dialect] || b.target_dialect }))}
+                  >
+                    <i className="icon fas fa-arrow-right-arrow-left" />{' '}
+                    {trans('target_for', { engine: DIALECT_LABEL[b.target_dialect] || b.target_dialect })}
+                  </div>
+                )}
               </td>
               <td>{fmtBytes(b.size_bytes)}</td>
               <td>

@@ -9,6 +9,7 @@ use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseRestorer;
+use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\StoragePaths;
 use RuntimeException;
 use Throwable;
@@ -145,7 +146,33 @@ class ImportJob
             if ($reader->isEncrypted()) {
                 $reader->prepareEncrypted($this->cipher, $opts['private_key']);
             }
-            $state->set('archive_meta', $reader->meta());
+            $meta = $reader->meta();
+            $state->set('archive_meta', $meta);
+
+            // Cross-engine guard: archives from format_version >= 2
+            // record which engine the SQL was generated for. If that
+            // disagrees with the live destination engine, abort early
+            // with a clear error rather than letting the restore fail
+            // mid-stream with a cryptic SQL syntax message.
+            if (! empty($opts['db'] ?? true)) {
+                $target = (string) ($meta['target_dialect'] ?? '');
+                if ($target !== '') {
+                    try {
+                        $here = Dialect::detect($this->db)->value;
+                        $compatible = $target === $here
+                            || ($target === Dialect::MYSQL->value && $here === Dialect::MARIADB->value)
+                            || ($target === Dialect::MARIADB->value && $here === Dialect::MYSQL->value);
+                        if (! $compatible) {
+                            throw new RuntimeException(
+                                "This backup targets `$target`, but the destination is `$here`. "
+                                . "Re-export selecting `$here` as the target engine, or restore onto a `$target` install."
+                            );
+                        }
+                    } catch (RuntimeException $e) {
+                        throw $e;
+                    } catch (Throwable) { /* dialect detection failed — let the restore try */ }
+                }
+            }
         } finally {
             $reader->close();
         }
@@ -297,15 +324,14 @@ class ImportJob
             return;
         }
 
-        // Each tick opens a fresh PDO connection, so the FOREIGN_KEY_CHECKS
-        // session variable from the previous tick is gone. We also can't
-        // rely on the dump's own SET line — even though it's emitted as
-        // a separate statement now, an FK check failure mid-batch would
-        // still abort. Disable explicitly at the start of every tick that
-        // runs SQL; re-enable when we cross EOF below.
-        try {
-            $this->db->unprepared('SET FOREIGN_KEY_CHECKS = 0');
-        } catch (Throwable) { /* best-effort */ }
+        // Each tick opens a fresh PDO connection, so any session-level
+        // FK toggle from the previous tick is gone. We also can't rely
+        // on the dump's own preamble — even though it's emitted as a
+        // separate statement, an FK violation mid-batch would still
+        // abort. Disable explicitly at the start of every tick that
+        // runs SQL; re-enable when we cross EOF below. The helper
+        // picks the right syntax for the destination engine.
+        DatabaseRestorer::disableForeignKeys($this->db);
 
         $size = filesize($paths['dump']) ?: 0;
         $offset = (int) $cursor['restore_offset'];
@@ -354,9 +380,7 @@ class ImportJob
             // Re-enable FK enforcement for any subsequent code paths
             // sharing this connection. Belt-and-braces: the next tick
             // would get a fresh connection anyway.
-            try {
-                $this->db->unprepared('SET FOREIGN_KEY_CHECKS = 1');
-            } catch (Throwable) { /* best-effort */ }
+            DatabaseRestorer::enableForeignKeys($this->db);
 
             $state->set('phase', 'rewrite');
         }
@@ -388,12 +412,30 @@ class ImportJob
         if ($sourceUrl !== '' && $destUrl !== '' && $sourceUrl !== $destUrl) {
             $stats = ['settings' => 0, 'posts_content' => 0, 'posts_parsed' => 0];
 
+            // Identifier quoting depends on the destination engine —
+            // backticks for MySQL/MariaDB, double quotes for PG/SQLite.
+            // String escaping uses standard SQL doubled-single-quote on
+            // every supported engine, so the parametrised path works
+            // unchanged.
+            $q = function (string $ident): string {
+                return Dialect::detect($this->db)->usesBackticks()
+                    ? '`' . str_replace('`', '``', $ident) . '`'
+                    : '"' . str_replace('"', '""', $ident) . '"';
+            };
+            $settings = $q('settings');
+            $value    = $q('value');
+            $posts    = $q('posts');
+            $content  = $q('content');
+            $parsed   = $q('parsed_content');
+
             // Settings — `forum.url` and any extension setting that
             // happens to embed the old URL. Run as REPLACE() so a
-            // single value can rewrite multiple substrings.
+            // single value can rewrite multiple substrings. REPLACE()
+            // is portable across all four engines (MySQL, MariaDB,
+            // PostgreSQL, SQLite all expose it identically).
             try {
                 $stats['settings'] = $this->db->update(
-                    'UPDATE `settings` SET `value` = REPLACE(`value`, ?, ?) WHERE `value` LIKE ?',
+                    "UPDATE $settings SET $value = REPLACE($value, ?, ?) WHERE $value LIKE ?",
                     [$sourceUrl, $destUrl, '%'.$sourceUrl.'%']
                 );
             } catch (Throwable) { /* ignore — table missing or schema differs */ }
@@ -404,7 +446,7 @@ class ImportJob
             // for the vast majority of forums.
             try {
                 $stats['posts_content'] = $this->db->update(
-                    'UPDATE `posts` SET `content` = REPLACE(`content`, ?, ?) WHERE `content` LIKE ?',
+                    "UPDATE $posts SET $content = REPLACE($content, ?, ?) WHERE $content LIKE ?",
                     [$sourceUrl, $destUrl, '%'.$sourceUrl.'%']
                 );
             } catch (Throwable) { /* ignore */ }
@@ -413,7 +455,7 @@ class ImportJob
             // absent on Flarum 2+. Try both column variants.
             try {
                 $stats['posts_parsed'] = $this->db->update(
-                    'UPDATE `posts` SET `parsed_content` = REPLACE(`parsed_content`, ?, ?) WHERE `parsed_content` LIKE ?',
+                    "UPDATE $posts SET $parsed = REPLACE($parsed, ?, ?) WHERE $parsed LIKE ?",
                     [$sourceUrl, $destUrl, '%'.$sourceUrl.'%']
                 );
             } catch (Throwable) { /* ignore */ }

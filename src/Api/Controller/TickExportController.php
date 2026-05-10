@@ -50,6 +50,11 @@ class TickExportController implements RequestHandlerInterface
             'message'  => $state->get('message'),
             'progress' => $state->get('progress'),
             'result'   => $state->get('result'),
+            // Lossy-translation notes raised by the introspector while
+            // dumping the schema (unsupported types, generated columns,
+            // etc.). Surfaced verbatim on the completion screen so the
+            // admin sees what didn't survive cross-engine translation.
+            'warnings' => $state->get('db_warnings', []),
         ]);
     }
 }

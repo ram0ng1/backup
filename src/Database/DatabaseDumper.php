@@ -3,23 +3,36 @@
 namespace Ramon\Backup\Database;
 
 use Illuminate\Database\Connection;
+use Ramon\Backup\Database\Emitter\EmitterFactory;
+use Ramon\Backup\Database\Emitter\SqlEmitter;
+use Ramon\Backup\Database\Introspector\IntrospectorFactory;
+use Ramon\Backup\Database\Introspector\SchemaIntrospector;
+use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
 /**
- * MySQL-specific, resumable database dumper.
+ * Cross-engine, resumable database dumper.
  *
- * Output is plain SQL with one statement per logical block, separated by
- * `\n-- @@END@@\n`. The sentinel comment is what `DatabaseRestorer`
+ * Architecture:
+ *   - The SOURCE connection is read by a dialect-specific
+ *     `SchemaIntrospector`, which produces an engine-neutral
+ *     `Schema\Table` model.
+ *   - The TARGET dialect (chosen at backup time by the admin) selects
+ *     a `SqlEmitter`, which renders that neutral model + raw row data
+ *     into the SQL the target engine expects.
+ *
+ * Output is plain SQL with one statement per logical block, separated
+ * by `\n-- @@END@@\n`. The sentinel comment is what `DatabaseRestorer`
  * splits on — we don't try to parse semicolons because string literals
- * can contain them. A SQL comment is a no-op for any tooling that might
- * read the file directly, so the dump stays usable as a regular .sql.
+ * (and PG `$$` blocks) can contain them. The delimiter is a comment in
+ * every supported engine, so the dump remains usable as a regular .sql
+ * with any of the engines' command-line clients.
  *
  * Resumable shape:
- *   - The dumper produces output incrementally via `dumpChunk()`, which
- *     returns up to ~$budgetBytes of SQL and updates the progress
- *     cursor it was given. The caller writes the SQL to a temp file
- *     and calls again on the next tick.
- *   - State persisted between ticks: `phase` (schema | data | done),
+ *   - The dumper is consumed via `dumpChunk()` style calls from
+ *     `ExportJob`, which writes the SQL to a temp file and persists
+ *     a small cursor between ticks.
+ *   - State persisted between ticks: `phase` (schema|data|done),
  *     remaining tables, and the offset into the current table.
  */
 class DatabaseDumper
@@ -33,92 +46,92 @@ class DatabaseDumper
     /** Rows pulled from a table per SELECT, regardless of byte budget. */
     private const ROWS_PER_QUERY = 200;
 
+    private SchemaIntrospector $introspector;
+    private SqlEmitter $emitter;
+
+    /** Cache: table name → described neutral table (so we don't re-query). */
+    private array $describedCache = [];
+
     public function __construct(
-        protected Connection $db
+        protected Connection $db,
+        ?Dialect $target = null,
     ) {
-        $driver = $db->getDriverName();
-        if ($driver !== 'mysql') {
-            throw new RuntimeException(
-                "Database driver `$driver` is not supported by the backup extension. Only MySQL is supported."
-            );
-        }
+        $source = Dialect::detect($db);
+        $this->introspector = IntrospectorFactory::for($db, $source);
+        $this->emitter      = EmitterFactory::for($target ?? $source);
+    }
+
+    /** The dialect tag the produced SQL targets — recorded in archive meta. */
+    public function targetTag(): string
+    {
+        return $this->emitter->targetTag();
     }
 
     /**
-     * Enumerate user tables (excluding views). Returned in a stable order
-     * so the dump is reproducible and resumable.
+     * Lossy-translation notes accumulated by the introspector during
+     * THIS instance's lifetime — i.e. the warnings raised by tables
+     * described in this tick. The caller (ExportJob) merges them
+     * into the persistent job state so the UI can show the union
+     * across all ticks at the end.
+     *
+     * @return list<string>
+     */
+    public function warnings(): array
+    {
+        return $this->introspector->warnings();
+    }
+
+    /**
+     * Enumerate user tables. Returned in a stable order so the dump is
+     * reproducible and resumable across ticks.
      *
      * @return list<string>
      */
     public function listTables(): array
     {
-        $rows = $this->db->select("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
-        $tables = [];
-        foreach ($rows as $row) {
-            // SHOW FULL TABLES returns columns with names like
-            // "Tables_in_<db>" and "Table_type" — pull the first scalar
-            // value defensively.
-            $vals = array_values((array) $row);
-            $tables[] = (string) $vals[0];
-        }
-        sort($tables, SORT_STRING);
-        return $tables;
+        return $this->introspector->listTables();
     }
 
     public function preamble(): string
     {
-        $now = gmdate('Y-m-d H:i:s');
-        // Each statement is delimited individually so the restorer
-        // can execute them via independent unprepared() calls. Bundling
-        // multiple statements into one block would lean on PDO::exec
-        // multi-statement support, which is configuration-dependent
-        // and silently drops everything past the first SQL on stricter
-        // setups — leaving FOREIGN_KEY_CHECKS at 1 and breaking the
-        // first CREATE TABLE that references a not-yet-created table.
-        return implode(self::STATEMENT_DELIMITER, [
-            "-- Flarum backup — database dump",
-            "-- Generated at $now UTC",
-            "SET NAMES utf8mb4",
-            "SET FOREIGN_KEY_CHECKS = 0",
-            "SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'",
-        ]) . self::STATEMENT_DELIMITER;
+        return $this->emitter->preamble();
     }
 
     public function epilogue(): string
     {
-        return "SET FOREIGN_KEY_CHECKS = 1" . self::STATEMENT_DELIMITER;
+        // Per-table fixups (PG sequence setval AND FK creation) are
+        // rendered just before the session-level epilogue so the
+        // emitter can rely on every row being in place — FKs added
+        // here validate in one pass and pass cleanly on consistent
+        // source data. The dumper instance is recreated per tick, so
+        // we re-describe every table at end-of-stream rather than
+        // trusting the in-memory cache.
+        //
+        // Always call the emitter regardless of "looks like there's
+        // nothing to do" heuristics: only the emitter itself knows
+        // whether it has FKs to add, sequences to bump, both, or
+        // neither (returning '' when neither applies).
+        $tail = '';
+        foreach ($this->introspector->listTables() as $name) {
+            $tail .= $this->emitter->emitPostDataFixups($this->describe($name));
+        }
+        return $tail . $this->emitter->epilogue();
     }
 
     /**
-     * Drop + recreate DDL for one table. Single line where possible so
-     * the restorer doesn't choke on embedded newlines in column comments.
-     * MySQL's SHOW CREATE TABLE preserves backticks and quoting; we just
-     * collapse runs of whitespace and strip newlines.
+     * Drop + recreate DDL for one table. Keeping the public name
+     * `dumpSchema` so the existing `ExportJob` driver loop is undisturbed.
      */
     public function dumpSchema(string $table): string
     {
-        $tableQ = $this->quoteIdent($table);
-        $row = $this->db->selectOne("SHOW CREATE TABLE $tableQ");
-        if (! $row) {
-            throw new RuntimeException("Could not read DDL for $table");
-        }
-        $vals  = array_values((array) $row);
-        $ddl   = (string) ($vals[1] ?? '');
-
-        // Collapse the multi-line DDL onto a single line. The dumper's
-        // statement delimiter is the only newline boundary the restorer
-        // recognises, so we cannot leave structural newlines in here.
-        $ddl = preg_replace('/\s+/', ' ', $ddl);
-
-        $sql = "DROP TABLE IF EXISTS $tableQ;" . self::STATEMENT_DELIMITER;
-        $sql .= $ddl . ";" . self::STATEMENT_DELIMITER;
-        return $sql;
+        $described = $this->describe($table);
+        return $this->emitter->emitSchema($described);
     }
 
     /**
      * Pull the next batch of rows from `$table` starting at `$offset`,
      * returning the SQL string and the number of rows consumed. The
-     * caller is responsible for accumulating offsets across ticks.
+     * caller accumulates offsets across ticks.
      *
      * Empty SQL with `consumed == 0` signals "table exhausted".
      *
@@ -126,68 +139,54 @@ class DatabaseDumper
      */
     public function dumpDataBatch(string $table, int $offset): array
     {
-        $tableQ = $this->quoteIdent($table);
-        $rows = $this->db->select("SELECT * FROM $tableQ LIMIT ? OFFSET ?", [self::ROWS_PER_QUERY, $offset]);
+        $described = $this->describe($table);
+
+        // Stable-ordered SELECT so OFFSET is meaningful across ticks.
+        // Tables without a primary key fall back to natural order; this
+        // is fine on read-only sources during a dump.
+        $orderBy = $this->buildOrderBy($described);
+        $tableQ  = $this->quoteIdentForRead($table);
+        $sql     = "SELECT * FROM $tableQ" . $orderBy . " LIMIT ? OFFSET ?";
+
+        $rows = $this->db->select($sql, [self::ROWS_PER_QUERY, $offset]);
         if (empty($rows)) {
             return ['sql' => '', 'consumed' => 0];
         }
 
-        // INSERT INTO `table` (`col1`, `col2`) VALUES (...), (...);
-        $first = (array) $rows[0];
-        $columns = array_keys($first);
-        $colList = implode(', ', array_map([$this, 'quoteIdent'], $columns));
-
-        $valueGroups = [];
-        foreach ($rows as $row) {
-            $row = (array) $row;
-            $vals = [];
-            foreach ($columns as $col) {
-                $vals[] = $this->quoteValue($row[$col] ?? null);
-            }
-            $valueGroups[] = '(' . implode(',', $vals) . ')';
-        }
-
-        $sql = "INSERT INTO $tableQ ($colList) VALUES " . implode(',', $valueGroups) . ';';
+        $rowsAsArrays = array_map(fn ($r) => (array) $r, $rows);
+        $emitted = $this->emitter->emitInserts($described, $rowsAsArrays);
         return [
-            'sql'      => $sql . self::STATEMENT_DELIMITER,
+            'sql'      => $emitted,
             'consumed' => count($rows),
         ];
     }
 
     /**
-     * Quote a SQL value the way mysqldump does: NULL stays NULL,
-     * integers/floats are bare, strings are escaped and wrapped in
-     * single quotes, and binary blobs round-trip via 0xHEX.
+     * One-line legacy quoter used only by the SELECT-path in
+     * `dumpDataBatch` — it must match the SOURCE engine, not the
+     * target. Engine-specific.
      */
-    public function quoteValue($value): string
+    private function quoteIdentForRead(string $ident): string
     {
-        if ($value === null) {
-            return 'NULL';
+        $source = Dialect::detect($this->db);
+        if ($source->usesBackticks()) {
+            return '`' . str_replace('`', '``', $ident) . '`';
         }
-        if (is_bool($value)) {
-            return $value ? '1' : '0';
-        }
-        if (is_int($value) || is_float($value)) {
-            return (string) $value;
-        }
-        if (! is_string($value)) {
-            $value = (string) $value;
-        }
-
-        // Detect binary content. Anything non-UTF-8 or containing NULs
-        // travels as a hex literal so we never need to worry about
-        // encoding round-trips.
-        if (preg_match('//u', $value) !== 1 || str_contains($value, "\0")) {
-            return '0x' . bin2hex($value);
-        }
-
-        // Use a real prepared-statement quoter to escape the string
-        // safely, including handling of \, ', NUL, \n, \r, etc.
-        return $this->db->getPdo()->quote($value);
+        return '"' . str_replace('"', '""', $ident) . '"';
     }
 
-    private function quoteIdent(string $ident): string
+    private function buildOrderBy(Table $table): string
     {
-        return '`' . str_replace('`', '``', $ident) . '`';
+        if (empty($table->primaryKey)) return '';
+        $cols = array_map(fn ($c) => $this->quoteIdentForRead($c), $table->primaryKey);
+        return ' ORDER BY ' . implode(', ', $cols);
+    }
+
+    private function describe(string $table): Table
+    {
+        if (! isset($this->describedCache[$table])) {
+            $this->describedCache[$table] = $this->introspector->describeTable($table);
+        }
+        return $this->describedCache[$table];
     }
 }

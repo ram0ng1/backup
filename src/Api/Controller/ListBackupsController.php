@@ -34,6 +34,7 @@ class ListBackupsController implements RequestHandlerInterface
             'contents'       => $b->contentsList(),
             'flarum_version' => $b->flarum_version,
             'php_version'    => $b->php_version,
+            'target_dialect' => $b->target_dialect,
             'created_at'     => optional($b->created_at)->toIso8601String(),
             'created_by'     => $b->created_by ? (int) $b->created_by : null,
         ])->all();

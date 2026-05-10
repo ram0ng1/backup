@@ -36,6 +36,14 @@ interface ExportProgress {
     filename: string;
     size: number;
   };
+  /**
+   * Per-column notes from the introspector about lossy translations:
+   * unsupported types coerced to TEXT/BLOB, generated columns whose
+   * expressions can't be replicated cross-engine, etc. Backend always
+   * returns an array (possibly empty); the UI shows them only when
+   * non-empty.
+   */
+  warnings?: string[];
 }
 
 const trans = (key: string, params?: Record<string, unknown>) =>
@@ -72,6 +80,13 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   protected encryptionEnabled = false;
   protected encryptionUseExternal = false;
   protected externalPublicKey = '';
+
+  // Target engine the dump should be generated for. Empty string =
+  // "same as source" (the most common case — backing up to restore
+  // onto the same install / a clone of it). The non-empty values
+  // make this a cross-engine migration: e.g. dump from MySQL,
+  // restore onto Postgres.
+  protected targetDialect: '' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' = '';
 
   protected starting = false;
   protected jobId: string | null = null;
@@ -114,6 +129,26 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
 
           {this.includeExtensions && this.extensionList()}
         </fieldset>
+
+        {this.includeDb && (
+          <fieldset className="BackupExport-fieldset">
+            <legend>{trans('target_title')}</legend>
+            <p className="helpText">{trans('target_help')}</p>
+            <select
+              className="FormControl BackupExport-targetSelect"
+              value={this.targetDialect}
+              onchange={(e: Event) => {
+                this.targetDialect = (e.target as HTMLSelectElement).value as typeof this.targetDialect;
+              }}
+            >
+              <option value="">{trans('target_same')}</option>
+              <option value="mysql">{trans('target_mysql')}</option>
+              <option value="mariadb">{trans('target_mariadb')}</option>
+              <option value="postgres">{trans('target_postgres')}</option>
+              <option value="sqlite">{trans('target_sqlite')}</option>
+            </select>
+          </fieldset>
+        )}
 
         <fieldset className="BackupExport-fieldset">
           <legend>{trans('encryption_title')}</legend>
@@ -328,6 +363,29 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           </>
         )}
 
+        {/*
+          Cross-engine translation notes. The backend always returns
+          an array — show the block only when it has entries so a
+          clean same-engine backup doesn't get a noisy "no warnings"
+          panel. Surfaced as soon as they appear (not gated on
+          phase=done) so the admin sees them while watching the
+          progress bar, not after the modal closes.
+        */}
+        {(s.warnings?.length ?? 0) > 0 && (
+          <div className="BackupExport-warnings" role="alert">
+            <div className="BackupExport-warnings-title">
+              <i className="icon fas fa-triangle-exclamation" />{' '}
+              {trans('warnings_title', { count: s.warnings!.length })}
+            </div>
+            <p className="helpText">{trans('warnings_help')}</p>
+            <ul className="BackupExport-warnings-list">
+              {s.warnings!.map((w, idx) => (
+                <li key={idx}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="Form-group BackupExport-progress-actions">
           {!isDone && !isError && (
             <Button className="Button" onclick={() => this.cancel()}>
@@ -380,6 +438,10 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             enabled: this.encryptionEnabled,
             public_key: this.encryptionUseExternal ? this.externalPublicKey.trim() : null,
           },
+          // Empty string = "same as source"; the backend treats null
+          // and "" identically so this carries the user's choice
+          // through unambiguously.
+          target_dialect: this.targetDialect || null,
         },
         surface: false,
       });

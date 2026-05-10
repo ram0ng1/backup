@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $contents
  * @property string|null $flarum_version
  * @property string|null $php_version
+ * @property string|null $target_dialect
  * @property int|null $created_by
  * @property \Carbon\Carbon|null $created_at
  * @property \Carbon\Carbon|null $updated_at
@@ -42,6 +43,7 @@ class Backup extends AbstractModel
         'contents',
         'flarum_version',
         'php_version',
+        'target_dialect',
         'created_by',
     ];
 

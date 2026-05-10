@@ -9,6 +9,7 @@ use Ramon\Backup\Archive\ArchiveWriter;
 use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseDumper;
+use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
@@ -96,9 +97,13 @@ class ExportJob
      *
      * @param array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>} $contents
      * @param array{enabled: bool, public_key?: string|null} $encryption
+     * @param string|null $targetDialect  Where the dump is meant to be restored
+     *                                    (mysql, mariadb, postgres, sqlite). When
+     *                                    null, falls back to the source engine —
+     *                                    i.e. a same-engine restore.
      * @param int|null $userId
      */
-    public function start(string $jobId, array $contents, array $encryption, ?int $userId): JobState
+    public function start(string $jobId, array $contents, array $encryption, ?string $targetDialect, ?int $userId): JobState
     {
         $dir = $this->paths->exportJobDir($jobId);
 
@@ -110,6 +115,14 @@ class ExportJob
         }
         if ($useEncryption && $providedKey === '' && ! $this->cipher->hasPublicKey()) {
             throw new RuntimeException('Encryption is enabled but no public key is configured.');
+        }
+
+        // Resolve target dialect early so we fail fast on a typo
+        // rather than midway through `runDbDump`. `null` means
+        // "same as source" — picked up at runtime by DatabaseDumper.
+        $resolvedTarget = null;
+        if ($targetDialect !== null && $targetDialect !== '') {
+            $resolvedTarget = Dialect::parse($targetDialect)->value;
         }
 
         $initial = [
@@ -131,6 +144,12 @@ class ExportJob
                 'use_external_key' => $useEncryption && $providedKey !== '',
                 'external_public_key' => $useEncryption && $providedKey !== '' ? $providedKey : null,
             ],
+            // Target engine the dump is being prepared for. Stored in
+            // the job state so every tick uses the same emitter, and
+            // travels into the archive header so the import side can
+            // refuse a dump targeting a different engine than the
+            // destination connection.
+            'target_dialect' => $resolvedTarget,
             'progress'      => [
                 'total_bytes'       => 0,
                 'processed_bytes'   => 0,
@@ -154,6 +173,11 @@ class ExportJob
                 'file_offset'    => 0,
                 'db_offset'      => 0,
             ],
+            // Notes from the introspector about lossy translations
+            // (unsupported types, generated columns, etc.). Accumulated
+            // across ticks and surfaced on the completion screen so
+            // the admin knows what didn't survive verbatim.
+            'db_warnings'   => [],
         ];
 
         return JobState::create($dir.DIRECTORY_SEPARATOR.'job.json', $initial);
@@ -330,7 +354,8 @@ class ExportJob
         $paths = $state->get('paths');
         $dumpFile = $paths['dump'];
 
-        $dumper = new DatabaseDumper($this->db);
+        $target = $state->get('target_dialect');
+        $dumper = new DatabaseDumper($this->db, $target ? Dialect::parse((string) $target) : null);
 
         $fh = @fopen($dumpFile, 'ab');
         if ($fh === false) {
@@ -379,6 +404,17 @@ class ExportJob
         }
 
         $state->set('cursor', $cursor);
+
+        // Roll up any lossy-translation notes the introspector raised
+        // this tick. Each instance only carries warnings for the
+        // tables it personally described, so the persistent list in
+        // state is the union across all ticks.
+        $existing = (array) $state->get('db_warnings', []);
+        $merged = array_values(array_unique(array_merge(
+            array_map('strval', $existing),
+            $dumper->warnings(),
+        )));
+        $state->set('db_warnings', $merged);
 
         $state->set('message',
             $allTablesDone
@@ -543,6 +579,10 @@ class ExportJob
 
         // Insert a placeholder row so we can derive the final filename
         // from its ID, then rename + update.
+        // `target_dialect` is left NULL for same-engine backups so the
+        // list UI can cheaply tell "this is a normal backup" apart from
+        // "this was retargeted to a different engine" without having to
+        // look up the source.
         $row = Backup::create([
             'filename'       => 'pending.flarum',
             'size_bytes'     => 0,
@@ -550,6 +590,7 @@ class ExportJob
             'contents'       => implode(',', array_keys(array_filter($contents))),
             'flarum_version' => $this->detectFlarumVersion(),
             'php_version'    => PHP_VERSION,
+            'target_dialect' => $state->get('target_dialect'),
             'created_by'     => $state->get('created_by'),
         ]);
 
@@ -710,6 +751,9 @@ class ExportJob
     private function listTablesSafely(): array
     {
         try {
+            // The table list comes from the SOURCE introspection only;
+            // the target dialect doesn't affect enumeration, so we can
+            // skip wiring it through here.
             return (new DatabaseDumper($this->db))->listTables();
         } catch (Throwable) {
             return [];
@@ -719,12 +763,23 @@ class ExportJob
     private function buildMeta(JobState $state): array
     {
         $contents = $state->get('contents');
+        $target   = $state->get('target_dialect');
+        $sourceDialect = '';
+        try {
+            $sourceDialect = Dialect::detect($this->db)->value;
+        } catch (Throwable) { /* leave blank if unknown */ }
+
         return [
-            'format_version' => 1,
+            'format_version' => 2, // 2 = adds source/target dialect tags
             'created_at'     => gmdate('c'),
             'flarum_version' => $this->detectFlarumVersion(),
             'php_version'    => PHP_VERSION,
             'contents'       => array_keys(array_filter($contents)),
+            'source_dialect' => $sourceDialect,
+            // The target the SQL was generated for. Equal to source on
+            // a same-engine backup; differs on a cross-engine
+            // migration (e.g. "I'm on MySQL, restoring to Postgres").
+            'target_dialect' => $target ?: $sourceDialect,
             // Source URL goes in the archive header in plain text (not
             // a secret) so the import side can rewrite occurrences in
             // the database to the destination server's URL — without

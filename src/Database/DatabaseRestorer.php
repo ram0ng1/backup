@@ -3,15 +3,21 @@
 namespace Ramon\Backup\Database;
 
 use Illuminate\Database\Connection;
-use RuntimeException;
+use Throwable;
 
 /**
  * Plays SQL produced by `DatabaseDumper` back into a database.
  *
- * Resumable across ticks via a "buffer + cursor" model: the caller pumps
- * SQL bytes in via `feed()` and calls `executeReady()` to flush whatever
- * complete statements are already terminated. Anything past the last
- * `STATEMENT_DELIMITER` is held back for the next tick.
+ * Resumable across ticks via a "buffer + cursor" model: the caller
+ * pumps SQL bytes in via `feed()` and calls `executeReady()` to flush
+ * whatever complete statements are already terminated. Anything past
+ * the last `STATEMENT_DELIMITER` is held back for the next tick.
+ *
+ * The restorer is engine-aware: it detects the destination's dialect
+ * and uses the right "disable FK enforcement" toggle for the duration
+ * of the load. Static helpers `disableForeignKeys()` /
+ * `enableForeignKeys()` are exposed so the surrounding job code can
+ * apply the toggle once per tick (each tick gets a fresh PDO session).
  *
  * Designed to be safe for repeated restores: every dumped table starts
  * with `DROP TABLE IF EXISTS`, so we never need to truncate up front.
@@ -88,5 +94,45 @@ class DatabaseRestorer
     public function statementsRun(): int
     {
         return $this->statementsRun;
+    }
+
+    /**
+     * Best-effort "suspend FK enforcement for this connection". Engine
+     * matrix:
+     *   - MySQL/MariaDB: `SET FOREIGN_KEY_CHECKS = 0`
+     *   - SQLite:        `PRAGMA foreign_keys = OFF`
+     *   - PostgreSQL:    no-op — `session_replication_role = 'replica'`
+     *                    requires superuser, so we cannot rely on it
+     *                    on managed hosts (RDS/Neon/Supabase). Instead,
+     *                    PG dumps emit FK constraints as separate
+     *                    `ALTER TABLE ADD CONSTRAINT` statements AFTER
+     *                    all data is loaded, so there is nothing to
+     *                    suspend during the INSERT phase to begin with.
+     *
+     * Each tick gets a fresh PDO session, so callers must invoke this
+     * at the start of every tick that runs SQL.
+     */
+    public static function disableForeignKeys(Connection $db): void
+    {
+        try {
+            match (Dialect::detect($db)) {
+                Dialect::MYSQL,
+                Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 0'),
+                Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = OFF'),
+                Dialect::POSTGRES => null, // see docblock
+            };
+        } catch (Throwable) { /* best-effort */ }
+    }
+
+    public static function enableForeignKeys(Connection $db): void
+    {
+        try {
+            match (Dialect::detect($db)) {
+                Dialect::MYSQL,
+                Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 1'),
+                Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = ON'),
+                Dialect::POSTGRES => null, // see docblock on disableForeignKeys
+            };
+        } catch (Throwable) { /* best-effort */ }
     }
 }
