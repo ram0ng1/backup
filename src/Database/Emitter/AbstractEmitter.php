@@ -21,6 +21,18 @@ abstract class AbstractEmitter implements SqlEmitter
     }
 
     /**
+     * Default: no notes. Concrete emitters that record translation
+     * notes (e.g. PG skipping FULLTEXT or oversized btree indexes)
+     * override this.
+     *
+     * @return list<string>
+     */
+    public function warnings(): array
+    {
+        return [];
+    }
+
+    /**
      * Quote an identifier (table name, column name, index name…). The
      * built-in escape for both backticks and double-quotes is to
      * double the quote character — that's the SQL standard for `"` and
