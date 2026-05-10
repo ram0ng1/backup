@@ -17,8 +17,6 @@ It started from my own need to migrate forums between hosts without the manual
 mysqldump-and-zip dance, and grew into a complete suite covering encryption,
 cross-server transfer, per-extension picking, and automatic URL rewriting.
 
-> 🚧 **Active development** — first stable release coming soon!
-
 ---
 
 ### ✨ Highlights
