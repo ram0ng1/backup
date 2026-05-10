@@ -382,10 +382,99 @@ class ImportJob
             // would get a fresh connection anyway.
             DatabaseRestorer::enableForeignKeys($this->db);
 
+            // Belt-and-braces sequence resync on Postgres. Our dump
+            // already emits `setval(...)` in its epilogue, but: (a)
+            // archives generated before that code shipped don't carry
+            // those statements; (b) a managed-host quirk could
+            // silently swallow the call; (c) an admin who manually
+            // ran `psql -f dump.sql` wouldn't have triggered our
+            // emitter at all. Running it again on the live database
+            // is harmless — `setval(seq, MAX(id)+1, false)` always
+            // converges to the right next value — so this protects
+            // every path that ends with "PG database newly populated".
+            $this->resyncPostgresSequences($state);
+
             $state->set('phase', 'rewrite');
         }
 
         $state->save();
+    }
+
+    /**
+     * After a bulk restore, bump every Postgres sequence past its
+     * column's `MAX(id)`. Without this the next `INSERT … RETURNING
+     * id` reuses a value already present and the user sees a
+     * `discussions_pkey` (or similar) unique-constraint violation as
+     * soon as they post their first new discussion.
+     *
+     * Sweeps every column in the current schema that has a backing
+     * sequence (covers both `SERIAL` and PG 10+ `IDENTITY`). Each
+     * `setval` is its own statement so one bad table doesn't abort
+     * the rest.
+     */
+    private function resyncPostgresSequences(JobState $state): void
+    {
+        try {
+            if (Dialect::detect($this->db) !== Dialect::POSTGRES) return;
+        } catch (Throwable) {
+            return;
+        }
+
+        // pg_get_serial_sequence returns the sequence name for both
+        // legacy SERIAL columns and PG 10+ IDENTITY columns. Filtering
+        // by `sequence IS NOT NULL` cheaply picks out exactly the
+        // columns we need to fix.
+        try {
+            $rows = $this->db->select(
+                "SELECT n.nspname AS schema_name, c.relname AS table_name,
+                        a.attname AS column_name,
+                        pg_get_serial_sequence(
+                            quote_ident(n.nspname)||'.'||quote_ident(c.relname),
+                            a.attname
+                        ) AS seq
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 JOIN pg_attribute a ON a.attrelid = c.oid
+                 WHERE c.relkind = 'r'
+                   AND n.nspname = current_schema()
+                   AND a.attnum > 0
+                   AND NOT a.attisdropped"
+            );
+        } catch (Throwable) {
+            return;
+        }
+
+        $bumped = 0;
+        foreach ($rows as $r) {
+            $arr = (array) $r;
+            $seq = $arr['seq'] ?? null;
+            if (! is_string($seq) || $seq === '') continue;
+
+            $tbl = (string) ($arr['table_name'] ?? '');
+            $col = (string) ($arr['column_name'] ?? '');
+            if ($tbl === '' || $col === '') continue;
+
+            $tblQ = '"' . str_replace('"', '""', $tbl) . '"';
+            $colQ = '"' . str_replace('"', '""', $col) . '"';
+
+            try {
+                $this->db->select(
+                    "SELECT setval(?, COALESCE((SELECT MAX($colQ) FROM $tblQ), 0) + 1, false)",
+                    [$seq]
+                );
+                $bumped++;
+            } catch (Throwable) {
+                // Skip individual failures — keep going so one weird
+                // table (e.g. permission missing on a system view we
+                // shouldn't have picked up) doesn't break the rest.
+            }
+        }
+
+        if ($bumped > 0) {
+            $progress = (array) $state->get('progress');
+            $progress['sequences_resynced'] = $bumped;
+            $state->set('progress', $progress);
+        }
     }
 
     /**
