@@ -68,17 +68,21 @@ class DatabaseDumper
     }
 
     /**
-     * Lossy-translation notes accumulated by the introspector during
-     * THIS instance's lifetime — i.e. the warnings raised by tables
-     * described in this tick. The caller (ExportJob) merges them
-     * into the persistent job state so the UI can show the union
-     * across all ticks at the end.
+     * Lossy-translation notes accumulated during THIS instance's
+     * lifetime — both from the introspector (unsupported source types,
+     * generated columns, etc.) and from the emitter (e.g. PG skipping
+     * a FULLTEXT or oversize-btree index). The caller (ExportJob)
+     * merges them into the persistent job state so the UI can show
+     * the union across all ticks at the end.
      *
      * @return list<string>
      */
     public function warnings(): array
     {
-        return $this->introspector->warnings();
+        return array_values(array_unique(array_merge(
+            $this->introspector->warnings(),
+            $this->emitter->warnings(),
+        )));
     }
 
     /**

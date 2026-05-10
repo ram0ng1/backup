@@ -42,4 +42,13 @@ interface SqlEmitter
 
     /** The dialect tag stored in the archive meta header. */
     public function targetTag(): string;
+
+    /**
+     * Cross-engine translation notes the emitter accumulated — e.g.
+     * "skipped FULLTEXT index because PG doesn't support it". Empty
+     * for emitters that always render a faithful 1:1 of the source.
+     *
+     * @return list<string>
+     */
+    public function warnings(): array;
 }

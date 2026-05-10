@@ -8,7 +8,7 @@ use Ramon\Backup\Database\Schema\ColumnType;
 use Ramon\Backup\Database\Schema\Table;
 
 /**
- * Emitter for PostgreSQL 10+. Five notable choices, each driven by
+ * Emitter for PostgreSQL 10+. Six notable choices, each driven by
  * what PG 10 actually permits without superuser on a managed host AND
  * by the reality that source MySQL data is rarely "clean":
  *
@@ -50,11 +50,41 @@ use Ramon\Backup\Database\Schema\Table;
  *     introspector still records the original member list as a
  *     translation note so the admin knows the constraint is gone.
  *
+ *   - Indexes that would blow PG's btree row-size limit are SKIPPED.
+ *     Two cases trigger this: (a) MySQL FULLTEXT/SPATIAL indexes,
+ *     which have no portable PG equivalent (a real translation
+ *     would mean GIN + tsvector + a separate populated column, well
+ *     outside what a backup tool should be doing), and (b) plain
+ *     btree indexes that include any TEXT/MEDIUMTEXT/LONGTEXT/BLOB
+ *     column — MySQL silently takes a key prefix on these, while PG
+ *     refuses any row whose indexed value exceeds ~2704 bytes (1/3
+ *     of an 8KB page) at INSERT time. We measured this on a real
+ *     forum: posts.content with a 2920-byte post lost the entire
+ *     INSERT batch. Skipping the index preserves all rows; an admin
+ *     who needs full-text search uses Flarum's search extension
+ *     anyway, which builds its own GIN/Meilisearch indexes.
+ *
  *   - All session prep is plain client setup (encoding, string
  *     conformance) — no privileged GUCs are touched.
  */
 class PostgresEmitter extends AbstractEmitter
 {
+    /** @var list<string> Cross-engine translation notes from this emitter. */
+    private array $warnings = [];
+
+    /**
+     * Notes about lossy translations the emitter applied — currently
+     * just "skipped index X because PG can't support it". Surfaced
+     * alongside the introspector's warnings on the export progress
+     * screen so the admin sees the full picture.
+     *
+     * @return list<string>
+     */
+    public function warnings(): array
+    {
+        return $this->warnings;
+    }
+
     protected function identQuote(): string
     {
         return '"';
@@ -118,8 +148,27 @@ class PostgresEmitter extends AbstractEmitter
         // already incorporate it (Laravel's default index naming
         // convention is `<table>_<col>_index`, so most names already
         // pass this check).
+        //
+        // Two index shapes are silently dropped here, with a warning,
+        // because PG can't replicate them faithfully:
+        //   - FULLTEXT / SPATIAL — no portable equivalent.
+        //   - btree on TEXT/BLOB columns — MySQL stores a key prefix,
+        //     PG would refuse any row > 2704 bytes (1/3 of a page).
+        //     The DATA still arrives intact; only the index is gone.
         foreach ($table->indexes as $idx) {
             if ($idx->primary) continue;
+
+            $skipReason = $this->indexSkipReason($table, $idx);
+            if ($skipReason !== null) {
+                $this->warnings[] = sprintf(
+                    'Index `%s`.`%s` skipped on PostgreSQL: %s. The underlying data is preserved; if you rely on this index for queries, recreate it manually with a tailored expression (e.g. `md5(col)` for equality lookups, or a GIN tsvector index for full-text search).',
+                    $table->name,
+                    $idx->name,
+                    $skipReason,
+                );
+                continue;
+            }
+
             $unique  = $idx->unique ? 'UNIQUE ' : '';
             $idxName = $this->namespacedIndexName($table->name, $idx->name);
             $sql .= 'CREATE ' . $unique . 'INDEX ' . $this->quoteIdent($idxName)
@@ -127,6 +176,46 @@ class PostgresEmitter extends AbstractEmitter
                 . $this->delimiter();
         }
         return $sql;
+    }
+
+    /**
+     * Return the human-readable reason the index can't be created on
+     * PG, or `null` if it's safe to emit. Reasons:
+     *   - FULLTEXT / SPATIAL: no btree-equivalent on PG.
+     *   - btree over a TEXT/BLOB column: PG btree refuses rows whose
+     *     indexed values exceed ~2704 bytes; MySQL silently takes a
+     *     key prefix instead, so the source is fine but the
+     *     destination would lose any insert that exceeds the limit.
+     */
+    private function indexSkipReason(Table $table, \Ramon\Backup\Database\Schema\Index $idx): ?string
+    {
+        $kind = strtoupper((string) ($idx->kind ?? ''));
+        if ($kind === 'FULLTEXT') {
+            return 'FULLTEXT indexes are MySQL-specific';
+        }
+        if ($kind === 'SPATIAL') {
+            return 'SPATIAL indexes require PostGIS, not portable';
+        }
+
+        // The unbounded text/blob types — TEXT/MEDIUMTEXT/LONGTEXT and
+        // their BLOB siblings — can hold values that exceed PG's btree
+        // page-third limit (~2704 bytes). VARCHAR/CHAR are bounded by
+        // their declared length and stay safe; ENUM is short by
+        // construction.
+        $unsafe = [
+            ColumnType::TEXT, ColumnType::MEDIUMTEXT, ColumnType::LONGTEXT,
+            ColumnType::BLOB, ColumnType::MEDIUMBLOB, ColumnType::LONGBLOB,
+        ];
+        foreach ($idx->columns as $colName) {
+            $col = $table->column($colName);
+            if ($col !== null && in_array($col->type, $unsafe, true)) {
+                return sprintf(
+                    'btree indexes over %s columns can exceed PG\'s 2704-byte index-tuple limit',
+                    strtoupper($col->type->value)
+                );
+            }
+        }
+        return null;
     }
 
     /**
