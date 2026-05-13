@@ -1,12 +1,12 @@
-import app from 'flarum/admin/app';
-import Component, { ComponentAttrs } from 'flarum/common/Component';
-import Button from 'flarum/common/components/Button';
-import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
-import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
-import extractText from 'flarum/common/utils/extractText';
-import type Mithril from 'mithril';
+import app from "flarum/admin/app";
+import Component, { ComponentAttrs } from "flarum/common/Component";
+import Button from "flarum/common/components/Button";
+import Modal, { IInternalModalAttrs } from "flarum/common/components/Modal";
+import LoadingIndicator from "flarum/common/components/LoadingIndicator";
+import extractText from "flarum/common/utils/extractText";
+import type Mithril from "mithril";
 
-import { apiRequest, apiUrl, errorDetail } from '../utils/api';
+import { apiRequest, apiUrl, errorDetail } from "../utils/api";
 
 const trans = (key: string, params?: Record<string, unknown>) =>
   app.translator.trans(`ramon-backup.admin.encryption.${key}`, params ?? {});
@@ -31,11 +31,11 @@ class KeypairRevealModal extends Modal<RevealAttrs> {
   protected copied = false;
 
   className() {
-    return 'BackupRevealModal Modal--medium';
+    return "BackupRevealModal Modal--medium";
   }
 
   title() {
-    return trans('reveal_modal.title');
+    return trans("reveal_modal.title");
   }
 
   content() {
@@ -44,24 +44,35 @@ class KeypairRevealModal extends Modal<RevealAttrs> {
 
     return (
       <div className="Modal-body">
-        <p>{trans('reveal_modal.intro')}</p>
+        <p>{trans("reveal_modal.intro")}</p>
 
         <div className="Alert Alert--error">
-          <strong>{trans('reveal_modal.warning_title')}</strong>
-          <p>{trans('reveal_modal.warning_body')}</p>
+          <strong>{trans("reveal_modal.warning_title")}</strong>
+          <p>{trans("reveal_modal.warning_body")}</p>
         </div>
 
-        <label className="BackupReveal-label">{trans('reveal_modal.snippet_label')}</label>
+        <label className="BackupReveal-label">
+          {trans("reveal_modal.snippet_label")}
+        </label>
         <pre className="BackupReveal-snippet">
           <code>{snippet}</code>
         </pre>
 
         <div className="Form-group BackupReveal-actions">
-          <Button className="Button" icon="fas fa-copy" onclick={() => this.copy(snippet)}>
-            {this.copied ? trans('reveal_modal.copied') : trans('reveal_modal.copy_button')}
+          <Button
+            className="Button"
+            icon="fas fa-copy"
+            onclick={() => this.copy(snippet)}
+          >
+            {this.copied
+              ? trans("reveal_modal.copied")
+              : trans("reveal_modal.copy_button")}
           </Button>
-          <Button className="Button Button--primary" onclick={() => this.hide()}>
-            {trans('reveal_modal.close')}
+          <Button
+            className="Button Button--primary"
+            onclick={() => this.hide()}
+          >
+            {trans("reveal_modal.close")}
           </Button>
         </div>
       </div>
@@ -70,7 +81,7 @@ class KeypairRevealModal extends Modal<RevealAttrs> {
 
   copy(snippet: string) {
     if (!navigator.clipboard) {
-      app.alerts.show({ type: 'error' }, trans('clipboard_unavailable'));
+      app.alerts.show({ type: "error" }, trans("clipboard_unavailable"));
       return;
     }
     navigator.clipboard
@@ -84,8 +95,8 @@ class KeypairRevealModal extends Modal<RevealAttrs> {
         }, 2000);
       })
       .catch((err) => {
-        console.error('[backup] clipboard writeText failed', err);
-        app.alerts.show({ type: 'error' }, trans('clipboard_failed'));
+        console.error("[backup] clipboard writeText failed", err);
+        app.alerts.show({ type: "error" }, trans("clipboard_failed"));
       });
   }
 }
@@ -99,18 +110,18 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
   protected submitting = false;
 
   className() {
-    return 'BackupRegenerateModal Modal--medium';
+    return "BackupRegenerateModal Modal--medium";
   }
 
   title() {
-    return trans('regenerate_modal.title');
+    return trans("regenerate_modal.title");
   }
 
   content() {
     return (
       <div className="Modal-body">
         <div className="Alert Alert--error">
-          <p>{trans('regenerate_modal.warning')}</p>
+          <p>{trans("regenerate_modal.warning")}</p>
         </div>
 
         <label className="BackupRegenerate-confirm">
@@ -120,8 +131,8 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
             onchange={(e: Event) => {
               this.acknowledged = (e.target as HTMLInputElement).checked;
             }}
-          />{' '}
-          {trans('regenerate_modal.acknowledge')}
+          />{" "}
+          {trans("regenerate_modal.acknowledge")}
         </label>
 
         <div className="Form-group">
@@ -131,7 +142,7 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
             disabled={!this.acknowledged || this.submitting}
             onclick={() => this.submit()}
           >
-            {trans('regenerate_modal.submit')}
+            {trans("regenerate_modal.submit")}
           </Button>
         </div>
       </div>
@@ -155,7 +166,7 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
 
 export default class EncryptionCard extends Component<ComponentAttrs> {
   protected status: EncryptionStatus | null = null;
-  protected loadState: 'loading' | 'ok' | 'error' = 'loading';
+  protected loadState: "loading" | "ok" | "error" = "loading";
   protected loadError: string | null = null;
   protected publicCopied = false;
 
@@ -168,76 +179,93 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
     return (
       <section className="BackupEncryptionCard">
         <header>
-          <h3>{trans('section_title')}</h3>
-          <p className="helpText">{trans('section_help')}</p>
+          <h3>{trans("section_title")}</h3>
+          <p className="helpText">{trans("section_help")}</p>
         </header>
 
-        {this.loadState === 'loading' && <LoadingIndicator />}
-        {this.loadState === 'error' && (
+        {this.loadState === "loading" && <LoadingIndicator />}
+        {this.loadState === "error" && (
           <div className="Alert Alert--error BackupEncryption-loadError">
-            <p>{trans('status.load_failed')}</p>
+            <p>{trans("status.load_failed")}</p>
             {this.loadError && (
               <p className="helpText">
                 <code>{this.loadError}</code>
               </p>
             )}
-            <Button className="Button" icon="fas fa-rotate" onclick={() => this.refresh()}>
-              {trans('status.retry')}
+            <Button
+              className="Button"
+              icon="fas fa-rotate"
+              onclick={() => this.refresh()}
+            >
+              {trans("status.retry")}
             </Button>
           </div>
         )}
-        {this.loadState === 'ok' && this.body()}
+        {this.loadState === "ok" && this.body()}
       </section>
     );
   }
 
   body() {
-    if (!this.status) return <p className="helpText">{trans('status.unknown')}</p>;
+    if (!this.status)
+      return <p className="helpText">{trans("status.unknown")}</p>;
 
     const s = this.status;
     if (!s.available) {
-      return <div className="Alert Alert--error">{trans('status.libsodium_missing')}</div>;
+      return (
+        <div className="Alert Alert--error">
+          {trans("status.libsodium_missing")}
+        </div>
+      );
     }
 
     return (
       <>
         <div className="BackupEncryption-statusRow">
-          {this.statusBadge('public', s.has_public_key)}
-          {this.statusBadge('private', s.private_key_present)}
+          {this.statusBadge("public", s.has_public_key)}
+          {this.statusBadge("private", s.private_key_present)}
         </div>
 
-        {s.healthy && <div className="Alert Alert--success">{trans('status.healthy')}</div>}
+        {s.healthy && (
+          <div className="Alert Alert--success">{trans("status.healthy")}</div>
+        )}
 
         {!s.has_public_key && !s.private_key_present && (
           <div>
-            <p className="helpText">{trans('status.not_setup')}</p>
-            <Button className="Button Button--primary" icon="fas fa-key" onclick={() => this.generate(false)}>
-              {trans('actions.generate')}
+            <p className="helpText">{trans("status.not_setup")}</p>
+            <Button
+              className="Button Button--primary"
+              icon="fas fa-key"
+              onclick={() => this.generate(false)}
+            >
+              {trans("actions.generate")}
             </Button>
           </div>
         )}
 
-        {s.has_public_key && s.private_key_present && s.keys_match === false && (
-          <div className="Alert Alert--error">
-            <strong>{trans('status.mismatch_title')}</strong>
-            <p>{trans('status.mismatch_body')}</p>
-            <p>
-              <code>'{s.config_key}'</code>
-            </p>
-          </div>
-        )}
+        {s.has_public_key &&
+          s.private_key_present &&
+          s.keys_match === false && (
+            <div className="Alert Alert--error">
+              <strong>{trans("status.mismatch_title")}</strong>
+              <p>{trans("status.mismatch_body")}</p>
+              <p>
+                <code>'{s.config_key}'</code>
+              </p>
+            </div>
+          )}
 
         {s.has_public_key && !s.private_key_present && (
           <div className="Alert Alert--error">
-            <strong>{trans('status.private_missing_title')}</strong>
-            <p>{trans('status.private_missing_body')}</p>
+            <strong>{trans("status.private_missing_title")}</strong>
+            <p>{trans("status.private_missing_body")}</p>
             <p>
               <code>'{s.config_key}'</code>
             </p>
           </div>
         )}
 
-        {s.has_public_key && this.publicKeyPanel(s.public_key || '', s.healthy)}
+        {s.has_public_key && this.publicKeyPanel(s.public_key || "", s.healthy)}
       </>
     );
   }
@@ -245,7 +273,7 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
   publicKeyPanel(publicKey: string, healthy: boolean) {
     return (
       <div className="BackupEncryption-publicKey">
-        <label>{trans('public_key.label')}</label>
+        <label>{trans("public_key.label")}</label>
         <div className="BackupEncryption-publicKeyRow">
           <pre>
             <code>{publicKey}</code>
@@ -253,26 +281,40 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
           <Button
             className="Button Button--icon"
             icon="fas fa-copy"
-            title={extractText(trans('public_key.copy_title'))}
+            title={extractText(trans("public_key.copy_title"))}
             onclick={() => this.copyPublic(publicKey)}
           >
-            {this.publicCopied ? extractText(trans('public_key.copied')) : ''}
+            {this.publicCopied ? extractText(trans("public_key.copied")) : ""}
           </Button>
         </div>
-        <p className="helpText">{healthy ? trans('public_key.help_healthy') : trans('public_key.help_broken')}</p>
-        <Button className="Button Button--danger" icon="fas fa-rotate" onclick={() => this.openRegenerate()}>
-          {trans('public_key.remove_button')}
+        <p className="helpText">
+          {healthy
+            ? trans("public_key.help_healthy")
+            : trans("public_key.help_broken")}
+        </p>
+        <Button
+          className="Button Button--danger"
+          icon="fas fa-rotate"
+          onclick={() => this.openRegenerate()}
+        >
+          {trans("public_key.remove_button")}
         </Button>
       </div>
     );
   }
 
-  statusBadge(kind: 'public' | 'private', present: boolean) {
+  statusBadge(kind: "public" | "private", present: boolean) {
     return (
-      <div className={`BackupEncryption-badge BackupEncryption-badge--${present ? 'ok' : 'missing'}`}>
-        <i className={`icon fas fa-${present ? 'check' : 'times'}`} />
+      <div
+        className={`BackupEncryption-badge BackupEncryption-badge--${
+          present ? "ok" : "missing"
+        }`}
+      >
+        <i className={`icon fas fa-${present ? "check" : "times"}`} />
         <span>{trans(`status.${kind}_key_label`)}</span>
-        <span className="BackupEncryption-badgeState">{trans(`status.${present ? 'present' : 'absent'}`)}</span>
+        <span className="BackupEncryption-badgeState">
+          {trans(`status.${present ? "present" : "absent"}`)}
+        </span>
       </div>
     );
   }
@@ -280,7 +322,7 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
   copyPublic(publicKey: string) {
     if (!publicKey) return;
     if (!navigator.clipboard) {
-      app.alerts.show({ type: 'error' }, trans('clipboard_unavailable'));
+      app.alerts.show({ type: "error" }, trans("clipboard_unavailable"));
       return;
     }
     navigator.clipboard
@@ -294,26 +336,26 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
         }, 2000);
       })
       .catch((err) => {
-        console.error('[backup] clipboard writeText failed', err);
-        app.alerts.show({ type: 'error' }, trans('clipboard_failed'));
+        console.error("[backup] clipboard writeText failed", err);
+        app.alerts.show({ type: "error" }, trans("clipboard_failed"));
       });
   }
 
   refresh(): Promise<void> {
-    this.loadState = 'loading';
+    this.loadState = "loading";
     this.loadError = null;
     return apiRequest<EncryptionStatus>({
-      method: 'GET',
+      method: "GET",
       url: `${apiUrl()}/backup/encryption/status`,
       surface: false,
     })
       .then((res) => {
         this.status = res;
-        this.loadState = 'ok';
+        this.loadState = "ok";
       })
       .catch((e) => {
         this.status = null;
-        this.loadState = 'error';
+        this.loadState = "error";
         this.loadError = errorDetail(e);
       })
       .then(() => {
@@ -323,8 +365,12 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
 
   async generate(acknowledgeLoss: boolean) {
     try {
-      const res = await apiRequest<{ public_key: string; private_key: string; config_key: string }>({
-        method: 'POST',
+      const res = await apiRequest<{
+        public_key: string;
+        private_key: string;
+        config_key: string;
+      }>({
+        method: "POST",
         url: `${apiUrl()}/backup/encryption/generate-keypair`,
         body: { acknowledge_loss: acknowledgeLoss },
         surface: false,
@@ -335,7 +381,10 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
         configKey: res.config_key,
       });
     } catch (e) {
-      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('actions.generate_failed'))));
+      app.alerts.show(
+        { type: "error" },
+        errorDetail(e, String(trans("actions.generate_failed")))
+      );
       throw e;
     }
   }
