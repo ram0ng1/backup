@@ -1,5 +1,6 @@
 {
     "name": "ramon/backup",
+    "version": "2.0.14",
     "description": "All-in-one backup, export and import for Flarum, with optional asymmetric encryption.",
     "keywords": [
         "flarum",

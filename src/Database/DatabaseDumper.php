@@ -128,6 +128,7 @@ class DatabaseDumper
      */
     public function dumpSchema(string $table): string
     {
+        $this->assertSafeIdent($table);
         $described = $this->describe($table);
         return $this->emitter->emitSchema($described);
     }
@@ -143,6 +144,7 @@ class DatabaseDumper
      */
     public function dumpDataBatch(string $table, int $offset): array
     {
+        $this->assertSafeIdent($table);
         $described = $this->describe($table);
 
         // Stable-ordered SELECT so OFFSET is meaningful across ticks.
@@ -172,11 +174,26 @@ class DatabaseDumper
      */
     private function quoteIdentForRead(string $ident): string
     {
+        $this->assertSafeIdent($ident);
         $source = Dialect::detect($this->db);
         if ($source->usesBackticks()) {
             return '`' . str_replace('`', '``', $ident) . '`';
         }
         return '"' . str_replace('"', '""', $ident) . '"';
+    }
+
+    /**
+     * Reject identifiers that don't match a strict ASCII allowlist.
+     * Tables and primary-key columns reaching this point originate from
+     * schema introspection (`information_schema` / `sqlite_master`), so
+     * normal data never trips this — it's a hard stop for a corrupted
+     * catalog or a future code path that forwards request input.
+     */
+    private function assertSafeIdent(string $ident): void
+    {
+        if (! preg_match('/^[A-Za-z0-9_]+$/', $ident)) {
+            throw new RuntimeException('Invalid input');
+        }
     }
 
     private function buildOrderBy(Table $table): string
