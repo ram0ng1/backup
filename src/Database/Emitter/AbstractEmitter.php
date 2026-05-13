@@ -37,9 +37,17 @@ abstract class AbstractEmitter implements SqlEmitter
      * built-in escape for both backticks and double-quotes is to
      * double the quote character — that's the SQL standard for `"` and
      * MySQL's documented escape for `` ` ``.
+     *
+     * Defense-in-depth: identifiers always come from schema introspection
+     * (never request input), but we still reject NUL and control bytes
+     * so a malformed catalog can't smuggle a statement terminator into
+     * the dump.
      */
     protected function quoteIdent(string $ident): string
     {
+        if ($ident === '' || preg_match('/[\x00-\x1F\x7F]/', $ident)) {
+            throw new \InvalidArgumentException('Unsafe identifier rejected.');
+        }
         $q = $this->identQuote();
         return $q . str_replace($q, $q . $q, $ident) . $q;
     }
