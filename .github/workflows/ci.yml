@@ -35,7 +35,10 @@ jobs:
           tools: composer:v2
 
       - name: Validar composer.json
-        run: composer validate --strict --no-check-publish
+        # `--no-check-version` silencia o aviso "version field is present" —
+        # mantemos o campo de propósito (lido pelo EndBug/version-check no
+        # workflow de release). Todos os outros warnings continuam fatais.
+        run: composer validate --strict --no-check-publish --no-check-version
 
       - name: Lint PHP (php -l)
         run: |

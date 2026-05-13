@@ -1,8 +1,9 @@
-import app from 'flarum/admin/app';
-import Component, { ComponentAttrs } from 'flarum/common/Component';
-import type Mithril from 'mithril';
+import app from "flarum/admin/app";
+import Component, { ComponentAttrs } from "flarum/common/Component";
+import type Mithril from "mithril";
 
-const trans = (key: string) => app.translator.trans(`ramon-backup.admin.errors.${key}`);
+const trans = (key: string) =>
+  app.translator.trans(`ramon-backup.admin.errors.${key}`);
 
 export interface BoundaryAttrs extends ComponentAttrs {
   fallback?: (err: unknown, retry: () => void) => Mithril.Children;
@@ -30,13 +31,14 @@ export class ErrorBoundary extends Component<BoundaryAttrs> {
         this.lastError = null;
         m.redraw();
       };
-      if (vnode.attrs.fallback) return vnode.attrs.fallback(this.lastError, retry);
+      if (vnode.attrs.fallback)
+        return vnode.attrs.fallback(this.lastError, retry);
       return (
         <div className="Alert Alert--error BackupErrorBoundary">
-          <strong>{trans('boundary_title')}</strong>
-          <p>{trans('boundary_body')}</p>
+          <strong>{trans("boundary_title")}</strong>
+          <p>{trans("boundary_body")}</p>
           <button type="button" className="Button" onclick={retry}>
-            {trans('boundary_retry')}
+            {trans("boundary_retry")}
           </button>
         </div>
       );
@@ -47,7 +49,7 @@ export class ErrorBoundary extends Component<BoundaryAttrs> {
       this.failed = true;
       this.lastError = err;
       vnode.attrs.onError?.(err);
-      console.error('[backup] render boundary caught', err);
+      console.error("[backup] render boundary caught", err);
       return null;
     }
   }

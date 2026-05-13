@@ -1,9 +1,9 @@
-import app from 'flarum/admin/app';
-import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
-import Button from 'flarum/common/components/Button';
-import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
+import app from "flarum/admin/app";
+import Modal, { IInternalModalAttrs } from "flarum/common/components/Modal";
+import Button from "flarum/common/components/Button";
+import LoadingIndicator from "flarum/common/components/LoadingIndicator";
 
-import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
+import { apiRequest, apiUrl, errorDetail, fmtBytes } from "../utils/api";
 
 /** Abort the upload XHR if no progress event fires for this long. */
 const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
@@ -31,7 +31,7 @@ interface ArchiveExtensionEntry {
   name?: string;
   title?: string;
   version?: string;
-  location?: 'workbench' | 'vendor' | 'unknown';
+  location?: "workbench" | "vendor" | "unknown";
   relative?: string;
   files?: number;
 }
@@ -62,7 +62,14 @@ interface InspectResult {
 }
 
 interface ImportProgress {
-  phase: 'inspect' | 'extract' | 'restore' | 'rewrite' | 'finalize' | 'done' | 'error';
+  phase:
+    | "inspect"
+    | "extract"
+    | "restore"
+    | "rewrite"
+    | "finalize"
+    | "done"
+    | "error";
   message: string;
   progress: {
     total_bytes: number;
@@ -88,7 +95,7 @@ const trans = (key: string, params?: Record<string, unknown>) =>
  *   3. progress — chunked-tick polling drives a progress bar.
  */
 export default class ImportModal extends Modal<ImportModalAttrs> {
-  protected stage: 'upload' | 'configure' | 'progress' = 'upload';
+  protected stage: "upload" | "configure" | "progress" = "upload";
 
   protected file: File | null = null;
   protected uploading = false;
@@ -97,7 +104,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   protected uploadError: string | null = null;
 
   protected inspect: InspectResult | null = null;
-  protected privateKey = '';
+  protected privateKey = "";
   protected confirmReplace = false;
   protected starting = false;
 
@@ -115,19 +122,19 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   protected polling = false;
 
   className() {
-    return 'BackupImportModal Modal--medium';
+    return "BackupImportModal Modal--medium";
   }
 
   title() {
-    if (this.stage === 'progress' && this.status?.phase === 'done') {
-      return this.sectionDb ? trans('logout_title') : trans('done_title');
+    if (this.stage === "progress" && this.status?.phase === "done") {
+      return this.sectionDb ? trans("logout_title") : trans("done_title");
     }
-    return trans('title');
+    return trans("title");
   }
 
   content() {
-    if (this.stage === 'upload') return this.uploadContent();
-    if (this.stage === 'configure') return this.configureContent();
+    if (this.stage === "upload") return this.uploadContent();
+    if (this.stage === "configure") return this.configureContent();
     return this.progressContent();
   }
 
@@ -137,8 +144,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     return (
       <div className="Modal-body">
         <div className="Alert Alert--warning">
-          <strong>{trans('warning_title')}</strong>
-          <p>{trans('warning_body')}</p>
+          <strong>{trans("warning_title")}</strong>
+          <p>{trans("warning_body")}</p>
         </div>
 
         <label className="BackupImport-fileLabel">
@@ -152,22 +159,27 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           />
           {this.file ? (
             <span>
-              {this.file.name} <span className="helpText">({fmtBytes(this.file.size)})</span>
+              {this.file.name}{" "}
+              <span className="helpText">({fmtBytes(this.file.size)})</span>
             </span>
           ) : (
-            <span className="helpText">{trans('choose_file')}</span>
+            <span className="helpText">{trans("choose_file")}</span>
           )}
         </label>
 
-        {this.uploadError && <div className="Alert Alert--error">{this.uploadError}</div>}
+        {this.uploadError && (
+          <div className="Alert Alert--error">{this.uploadError}</div>
+        )}
 
         {this.uploading && (
           <div className="BackupImport-uploadProgress">
             <div className="BackupImport-bar">
               <div
                 className={
-                  'BackupImport-bar-fill' +
-                  (this.uploadIndeterminate ? ' BackupImport-bar-fill--indeterminate' : '')
+                  "BackupImport-bar-fill" +
+                  (this.uploadIndeterminate
+                    ? " BackupImport-bar-fill--indeterminate"
+                    : "")
                 }
                 style={
                   this.uploadIndeterminate
@@ -178,8 +190,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             </div>
             <div className="BackupImport-uploadStatus helpText">
               {this.uploadIndeterminate
-                ? trans('inspecting_archive')
-                : trans('uploading_pct', { pct: this.uploadProgress })}
+                ? trans("inspecting_archive")
+                : trans("uploading_pct", { pct: this.uploadProgress })}
             </div>
           </div>
         )}
@@ -191,7 +203,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             disabled={this.uploading || !this.file}
             onclick={() => this.upload()}
           >
-            {trans('upload_button')}
+            {trans("upload_button")}
           </Button>
         </div>
       </div>
@@ -223,24 +235,24 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       // Anything missing from the archive can't be ticked anyway, so
       // there's no value in defaulting it to true.
       const contents = res.meta.contents || [];
-      this.sectionDb = contents.includes('db');
-      this.sectionAssets = contents.includes('assets');
-      this.sectionStorage = contents.includes('storage');
-      this.sectionExtensions = contents.includes('extensions');
+      this.sectionDb = contents.includes("db");
+      this.sectionAssets = contents.includes("assets");
+      this.sectionStorage = contents.includes("storage");
+      this.sectionExtensions = contents.includes("extensions");
 
       // Normalise to {id} regardless of which manifest version the
       // archive was packed with (string[] vs ArchiveExtensionEntry[]).
       const exts = res.meta.manifest?.extensions || [];
       this.extensionsByName = {};
       for (const e of exts) {
-        const id = typeof e === 'string' ? e : e.id;
+        const id = typeof e === "string" ? e : e.id;
         if (id) this.extensionsByName[id] = true;
       }
 
-      this.stage = 'configure';
+      this.stage = "configure";
     } catch (e: any) {
-      console.error('[backup] archive upload failed', e);
-      this.uploadError = errorDetail(e, String(trans('upload_failed')));
+      console.error("[backup] archive upload failed", e);
+      this.uploadError = errorDetail(e, String(trans("upload_failed")));
     } finally {
       this.uploading = false;
       m.redraw();
@@ -263,17 +275,21 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
    * requests so the bar advances smoothly through the entire file
    * even though each individual request only carries a few MB.
    */
-  private async uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
+  private async uploadWithProgress(
+    file: File,
+    onProgress: (pct: number) => void
+  ): Promise<InspectResult> {
     // ─── 1. init ──────────────────────────────────────────────────
     const init = await apiRequest<{ job_id: string; chunk_size: number }>({
-      method: 'POST',
+      method: "POST",
       url: `${apiUrl()}/backup/imports`,
       body: { filename: file.name, size: file.size },
       surface: false,
     });
 
     const jobId = init.job_id;
-    const chunkSize = init.chunk_size > 0 ? init.chunk_size : FALLBACK_CHUNK_BYTES;
+    const chunkSize =
+      init.chunk_size > 0 ? init.chunk_size : FALLBACK_CHUNK_BYTES;
 
     // ─── 2. chunk loop ────────────────────────────────────────────
     let offset = 0;
@@ -304,7 +320,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     // ─── 3. inspect ───────────────────────────────────────────────
     onProgress(100);
     return apiRequest<InspectResult>({
-      method: 'POST',
+      method: "POST",
       url: `${apiUrl()}/backup/imports/${jobId}/inspect`,
       surface: false,
     });
@@ -329,11 +345,11 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       }, 5_000);
       const stopIdleTimer = () => clearInterval(idleTimer);
 
-      xhr.upload.addEventListener('progress', () => {
+      xhr.upload.addEventListener("progress", () => {
         lastProgress = Date.now();
       });
 
-      xhr.addEventListener('load', () => {
+      xhr.addEventListener("load", () => {
         stopIdleTimer();
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve();
@@ -347,21 +363,21 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           reject({ detail: detail || `${xhr.status} ${xhr.statusText}` });
         }
       });
-      xhr.addEventListener('error', () => {
+      xhr.addEventListener("error", () => {
         stopIdleTimer();
-        reject({ detail: trans('upload_failed') as string });
+        reject({ detail: String(trans("upload_failed")) });
       });
-      xhr.addEventListener('abort', () => {
+      xhr.addEventListener("abort", () => {
         stopIdleTimer();
-        reject({ detail: trans('upload_idle_timeout') as string });
+        reject({ detail: String(trans("upload_idle_timeout")) });
       });
 
-      xhr.open('POST', `${apiUrl()}/backup/imports/${jobId}/chunk`, true);
+      xhr.open("POST", `${apiUrl()}/backup/imports/${jobId}/chunk`, true);
       xhr.withCredentials = true;
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      xhr.setRequestHeader('X-Chunk-Offset', String(offset));
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-Chunk-Offset", String(offset));
       const csrf = (app as any).session?.csrfToken;
-      if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
+      if (csrf) xhr.setRequestHeader("X-CSRF-Token", csrf);
       xhr.send(slice);
     });
   }
@@ -372,48 +388,48 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const i = this.inspect!;
     return (
       <div className="Modal-body">
-        <h4>{trans('inspect_title')}</h4>
+        <h4>{trans("inspect_title")}</h4>
         <dl className="BackupImport-meta">
           {i.meta.created_at && (
             <>
-              <dt>{trans('meta_when')}</dt>
+              <dt>{trans("meta_when")}</dt>
               <dd>{i.meta.created_at}</dd>
             </>
           )}
           {i.meta.flarum_version && (
             <>
-              <dt>{trans('meta_flarum')}</dt>
+              <dt>{trans("meta_flarum")}</dt>
               <dd>{i.meta.flarum_version}</dd>
             </>
           )}
           {i.meta.contents && (
             <>
-              <dt>{trans('meta_contents')}</dt>
-              <dd>{i.meta.contents.join(', ')}</dd>
+              <dt>{trans("meta_contents")}</dt>
+              <dd>{i.meta.contents.join(", ")}</dd>
             </>
           )}
           {i.meta.source_url && (
             <>
-              <dt>{trans('meta_source_url')}</dt>
+              <dt>{trans("meta_source_url")}</dt>
               <dd>
                 <code>{i.meta.source_url}</code>
               </dd>
             </>
           )}
-          <dt>{trans('meta_size')}</dt>
+          <dt>{trans("meta_size")}</dt>
           <dd>{fmtBytes(i.size)}</dd>
         </dl>
 
         <div className="Alert Alert--info BackupImport-urlNote">
-          <i className="icon fas fa-info-circle" /> {trans('url_rewrite_note')}
+          <i className="icon fas fa-info-circle" /> {trans("url_rewrite_note")}
         </div>
 
         {this.selectionFieldset(i)}
 
         {i.is_encrypted && (
           <fieldset className="BackupImport-fieldset">
-            <legend>{trans('key_title')}</legend>
-            <p className="helpText">{trans('key_help')}</p>
+            <legend>{trans("key_title")}</legend>
+            <p className="helpText">{trans("key_help")}</p>
             <textarea
               className="FormControl BackupImport-keyInput"
               rows={3}
@@ -423,13 +439,15 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
                 this.privateKey = (e.target as HTMLTextAreaElement).value;
               }}
             />
-            <p className="helpText BackupImport-keyHint">{trans('key_hint_local')}</p>
+            <p className="helpText BackupImport-keyHint">
+              {trans("key_hint_local")}
+            </p>
           </fieldset>
         )}
 
         <div className="Alert Alert--error BackupImport-confirmAlert">
-          <strong>{trans('confirm_title')}</strong>
-          <p>{trans('confirm_body')}</p>
+          <strong>{trans("confirm_title")}</strong>
+          <p>{trans("confirm_body")}</p>
           <label className="BackupImport-confirm">
             <input
               type="checkbox"
@@ -437,8 +455,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
               onchange={(e: Event) => {
                 this.confirmReplace = (e.target as HTMLInputElement).checked;
               }}
-            />{' '}
-            <span>{trans('confirm_check')}</span>
+            />{" "}
+            <span>{trans("confirm_check")}</span>
           </label>
         </div>
 
@@ -449,7 +467,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             disabled={this.starting || !this.confirmReplace}
             onclick={() => this.startRestore()}
           >
-            {trans('start_button')}
+            {trans("start_button")}
           </Button>
         </div>
       </div>
@@ -459,37 +477,58 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   selectionFieldset(i: InspectResult) {
     const contents = i.meta.contents || [];
     const manifest = i.meta.manifest || {};
-    const hasDb = contents.includes('db');
-    const hasAssets = contents.includes('assets');
-    const hasStorage = contents.includes('storage');
-    const hasExtensions = contents.includes('extensions');
+    const hasDb = contents.includes("db");
+    const hasAssets = contents.includes("assets");
+    const hasStorage = contents.includes("storage");
+    const hasExtensions = contents.includes("extensions");
     const rawExtList = manifest.extensions || [];
     // Normalise to a uniform shape so the renderer can stay simple,
     // regardless of which manifest version the archive used.
-    const extList: ArchiveExtensionEntry[] = (rawExtList as Array<string | ArchiveExtensionEntry>).map((e) =>
-      typeof e === 'string' ? { id: e, location: 'workbench' as const } : e
+    const extList: ArchiveExtensionEntry[] = (
+      rawExtList as Array<string | ArchiveExtensionEntry>
+    ).map((e) =>
+      typeof e === "string" ? { id: e, location: "workbench" as const } : e
     );
 
     return (
       <fieldset className="BackupImport-fieldset">
-        <legend>{trans('selection_title')}</legend>
-        <p className="helpText">{trans('selection_help')}</p>
+        <legend>{trans("selection_title")}</legend>
+        <p className="helpText">{trans("selection_help")}</p>
 
-        {hasDb && this.sectionRow('db', this.sectionDb, (v) => (this.sectionDb = v))}
-        {hasAssets && this.sectionRow('assets', this.sectionAssets, (v) => (this.sectionAssets = v), manifest.asset_count)}
-        {hasStorage && this.sectionRow('storage', this.sectionStorage, (v) => (this.sectionStorage = v), manifest.storage_count)}
+        {hasDb &&
+          this.sectionRow("db", this.sectionDb, (v) => (this.sectionDb = v))}
+        {hasAssets &&
+          this.sectionRow(
+            "assets",
+            this.sectionAssets,
+            (v) => (this.sectionAssets = v),
+            manifest.asset_count
+          )}
+        {hasStorage &&
+          this.sectionRow(
+            "storage",
+            this.sectionStorage,
+            (v) => (this.sectionStorage = v),
+            manifest.storage_count
+          )}
         {hasExtensions && (
           <>
-            {this.sectionRow('extensions', this.sectionExtensions, (v) => {
-              this.sectionExtensions = v;
-              // Cascade: turning the section off / on flips every
-              // child to match. The user can then untick individuals.
-              for (const name of extList) this.extensionsByName[name] = v;
-            }, manifest.extension_count)}
+            {this.sectionRow(
+              "extensions",
+              this.sectionExtensions,
+              (v) => {
+                this.sectionExtensions = v;
+                // Cascade: turning the section off / on flips every
+                // child to match. The user can then untick individuals.
+                for (const ext of extList) this.extensionsByName[ext.id] = v;
+              },
+              manifest.extension_count
+            )}
 
             {this.sectionExtensions && manifest.has_composer && (
               <div className="BackupImport-composerNote helpText">
-                <i className="icon fas fa-cube" /> {trans('extensions_composer_note')}
+                <i className="icon fas fa-cube" />{" "}
+                {trans("extensions_composer_note")}
               </div>
             )}
 
@@ -501,16 +540,22 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
                       type="checkbox"
                       checked={!!this.extensionsByName[ext.id]}
                       onchange={(e: Event) => {
-                        this.extensionsByName[ext.id] = (e.target as HTMLInputElement).checked;
+                        this.extensionsByName[ext.id] = (
+                          e.target as HTMLInputElement
+                        ).checked;
                       }}
-                    />{' '}
-                    <span className="BackupImport-extTitle">{ext.title || ext.id}</span>{' '}
+                    />{" "}
+                    <span className="BackupImport-extTitle">
+                      {ext.title || ext.id}
+                    </span>{" "}
                     {ext.name && ext.name !== ext.id && (
                       <code className="BackupImport-extName">{ext.name}</code>
                     )}
                     {ext.location && (
-                      <span className={`BackupImport-extTag BackupImport-extTag--${ext.location}`}>
-                        {trans('extensions_tag_' + ext.location)}
+                      <span
+                        className={`BackupImport-extTag BackupImport-extTag--${ext.location}`}
+                      >
+                        {trans("extensions_tag_" + ext.location)}
                       </span>
                     )}
                   </label>
@@ -523,19 +568,26 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     );
   }
 
-  sectionRow(key: 'db' | 'assets' | 'storage' | 'extensions', checked: boolean, set: (v: boolean) => void, count?: number) {
+  sectionRow(
+    key: "db" | "assets" | "storage" | "extensions",
+    checked: boolean,
+    set: (v: boolean) => void,
+    count?: number
+  ) {
     return (
       <label className="BackupImport-sectionRow">
         <input
           type="checkbox"
           checked={checked}
           onchange={(e: Event) => set((e.target as HTMLInputElement).checked)}
-        />{' '}
-        <span className="BackupImport-sectionLabel">{trans('section_' + key)}</span>
+        />{" "}
+        <span className="BackupImport-sectionLabel">
+          {trans("section_" + key)}
+        </span>
         {count !== undefined && count > 0 && (
           <span className="BackupImport-sectionCount helpText">
-            {' '}
-            ({trans('section_count', { count })})
+            {" "}
+            ({trans("section_count", { count })})
           </span>
         )}
       </label>
@@ -552,8 +604,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const extensionsField: boolean | string[] = !this.sectionExtensions
       ? false
       : allChecked
-        ? true
-        : extEntries.filter(([, v]) => v).map(([k]) => k);
+      ? true
+      : extEntries.filter(([, v]) => v).map(([k]) => k);
 
     return {
       db: this.sectionDb,
@@ -569,7 +621,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
     try {
       const res = await apiRequest<{ phase: string; message: string }>({
-        method: 'POST',
+        method: "POST",
         url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/start`,
         surface: false,
         body: {
@@ -578,9 +630,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           selection: this.buildSelection(),
         },
       });
-      this.stage = 'progress';
+      this.stage = "progress";
       this.status = {
-        phase: res.phase as ImportProgress['phase'],
+        phase: res.phase as ImportProgress["phase"],
         message: res.message,
         progress: {
           total_bytes: this.inspect.size,
@@ -593,7 +645,10 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       m.redraw();
       this.pump();
     } catch (e) {
-      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('start_failed'))));
+      app.alerts.show(
+        { type: "error" },
+        errorDetail(e, String(trans("start_failed")))
+      );
     } finally {
       this.starting = false;
     }
@@ -609,33 +664,39 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     // dedicated completion view: the user has finished waiting and
     // now needs to know what to do next (which differs depending on
     // whether the DB was actually replaced).
-    if (s.phase === 'done') return this.completedContent();
+    if (s.phase === "done") return this.completedContent();
 
-    const isError = s.phase === 'error';
+    const isError = s.phase === "error";
     const pct = Math.max(0, Math.min(100, s.progress?.percent || 0));
 
     return (
       <div className="Modal-body BackupImport-progress">
         <div className={`BackupImport-status BackupImport-status--${s.phase}`}>
-          <strong>{trans('phase_' + s.phase)}</strong>
+          <strong>{trans("phase_" + s.phase)}</strong>
           <p>{s.message}</p>
         </div>
 
         {!isError && (
           <div className="BackupImport-bar">
-            <div className="BackupImport-bar-fill" style={{ width: `${pct}%` }} />
+            <div
+              className="BackupImport-bar-fill"
+              style={{ width: `${pct}%` }}
+            />
           </div>
         )}
 
         <div className="Form-group BackupImport-progress-actions">
           {!isError && (
             <Button className="Button" onclick={() => this.cancel()}>
-              {trans('cancel_button')}
+              {trans("cancel_button")}
             </Button>
           )}
           {isError && (
-            <Button className="Button Button--primary" onclick={() => this.close()}>
-              {trans('close_button')}
+            <Button
+              className="Button Button--primary"
+              onclick={() => this.close()}
+            >
+              {trans("close_button")}
             </Button>
           )}
         </div>
@@ -662,12 +723,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           <div className="BackupImport-completedIcon">
             <i className="fas fa-right-from-bracket" />
           </div>
-          <h3 className="BackupImport-completedTitle">{trans('logout_title')}</h3>
-          <p className="BackupImport-completedBody">{trans('logout_body')}</p>
+          <h3 className="BackupImport-completedTitle">
+            {trans("logout_title")}
+          </h3>
+          <p className="BackupImport-completedBody">{trans("logout_body")}</p>
 
           <ol className="BackupImport-completedSteps">
-            <li>{trans('logout_step_reload')}</li>
-            <li>{trans('logout_step_login')}</li>
+            <li>{trans("logout_step_reload")}</li>
+            <li>{trans("logout_step_login")}</li>
           </ol>
 
           <Button
@@ -675,7 +738,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             icon="fas fa-rotate"
             onclick={() => window.location.reload()}
           >
-            {trans('logout_button')}
+            {trans("logout_button")}
           </Button>
         </div>
       );
@@ -686,10 +749,10 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         <div className="BackupImport-completedIcon BackupImport-completedIcon--success">
           <i className="fas fa-circle-check" />
         </div>
-        <h3 className="BackupImport-completedTitle">{trans('done_title')}</h3>
-        <p className="BackupImport-completedBody">{trans('done_body')}</p>
+        <h3 className="BackupImport-completedTitle">{trans("done_title")}</h3>
+        <p className="BackupImport-completedBody">{trans("done_body")}</p>
         <Button className="Button Button--primary" onclick={() => this.close()}>
-          {trans('close_button')}
+          {trans("close_button")}
         </Button>
       </div>
     );
@@ -700,10 +763,15 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     this.polling = true;
 
     try {
-      while (this.inspect && this.status && this.status.phase !== 'done' && this.status.phase !== 'error') {
+      while (
+        this.inspect &&
+        this.status &&
+        this.status.phase !== "done" &&
+        this.status.phase !== "error"
+      ) {
         try {
           const res = await app.request<ImportProgress>({
-            method: 'POST',
+            method: "POST",
             url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/tick`,
           });
           this.status = res;
@@ -713,25 +781,25 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           // the server may still be mid-write. Surface a synthetic
           // error phase, and explicitly tell the user to verify
           // server state before retrying.
-          console.error('[backup] import tick failed', e);
-          const detail = errorDetail(e, String(trans('phase_error_network')));
+          console.error("[backup] import tick failed", e);
+          const detail = errorDetail(e, String(trans("phase_error_network")));
           this.status = {
             ...this.status!,
-            phase: 'error',
+            phase: "error",
             message: detail,
           };
           m.redraw();
           break;
         }
       }
-      if (this.status?.phase === 'done') {
+      if (this.status?.phase === "done") {
         // Don't refresh the parent panel — when the backup includes
         // the database, restoring it has just replaced the sessions
         // table this admin is authenticated against. Any further API
         // call from this stale session would fail (401 / CSRF) and
         // surface as a confusing "Oops!" toast. The user clicks
         // Reload below and gets a clean session.
-        app.alerts.show({ type: 'success' }, trans('completed'));
+        app.alerts.show({ type: "success" }, trans("completed"));
         if (!this.sectionDb) this.attrs.onComplete();
       }
     } finally {
@@ -743,12 +811,12 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     if (!this.inspect) return;
     try {
       await app.request({
-        method: 'DELETE',
+        method: "DELETE",
         url: `${apiUrl()}/backup/imports/${this.inspect.job_id}`,
       });
     } catch (e) {
-      console.error('[backup] import cancel failed', e);
-      app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
+      console.error("[backup] import cancel failed", e);
+      app.alerts.show({ type: "warning" }, trans("cancel_failed_warn"));
     }
     this.close();
   }
