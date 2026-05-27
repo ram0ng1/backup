@@ -3,6 +3,7 @@
 namespace Ramon\Backup\Database\Introspector;
 
 use Illuminate\Database\Connection;
+use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Database\Schema\Column;
 use Ramon\Backup\Database\Schema\ColumnType;
 use Ramon\Backup\Database\Schema\ForeignKey;
@@ -14,15 +15,25 @@ use RuntimeException;
  * Reads schema from a live MySQL/MariaDB connection. Uses
  * `information_schema` so it works regardless of `SHOW CREATE TABLE`
  * permission quirks across managed hosts.
+ *
+ * MariaDB caveat: since 10.2.7, MariaDB returns COLUMN_DEFAULT as the
+ * raw SQL expression string — string literals come wrapped in single
+ * quotes (`'foo'`), and a NULL default is returned as the literal
+ * four-character string `"NULL"`. MySQL still returns actual NULL and
+ * a bare string. We normalise both shapes in `normaliseDefault()` so
+ * downstream code sees the same neutral form regardless of source.
  */
 class MysqlIntrospector implements SchemaIntrospector
 {
     /** @var list<string> */
     private array $warnings = [];
 
+    private bool $isMariaDb;
+
     public function __construct(
         protected Connection $db,
     ) {
+        $this->isMariaDb = Dialect::detect($db) === Dialect::MARIADB;
     }
 
     public function warnings(): array
@@ -100,22 +111,7 @@ class MysqlIntrospector implements SchemaIntrospector
             $precision = $r['NUMERIC_PRECISION'] !== null ? (int) $r['NUMERIC_PRECISION'] : null;
             $scale     = $r['NUMERIC_SCALE'] !== null ? (int) $r['NUMERIC_SCALE'] : null;
 
-            $rawDefault = $r['COLUMN_DEFAULT'];
-            $defaultIsExpr = false;
-            $default = null;
-            if ($rawDefault !== null) {
-                // information_schema returns CURRENT_TIMESTAMP without
-                // quotes; literal defaults come through unquoted too.
-                // The simplest heuristic that's correct for Flarum's
-                // schema: CURRENT_TIMESTAMP / NULL / NOW() = expression.
-                $upper = strtoupper((string) $rawDefault);
-                if (in_array($upper, ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME'], true)) {
-                    $defaultIsExpr = true;
-                    $default = $upper;
-                } else {
-                    $default = (string) $rawDefault;
-                }
-            }
+            [$default, $defaultIsExpr] = $this->normaliseDefault($r['COLUMN_DEFAULT']);
 
             $onUpdate = null;
             if (str_contains($extra, 'on update')) {
@@ -141,6 +137,64 @@ class MysqlIntrospector implements SchemaIntrospector
             );
         }
         return $columns;
+    }
+
+    /**
+     * Normalise `information_schema.COLUMNS.COLUMN_DEFAULT` into a
+     * (literalValue|null, isExpression) pair that the rest of the
+     * pipeline expects.
+     *
+     * Three sources to reconcile:
+     *
+     *   - MySQL ≤ 8.0: returns actual NULL for "no default" and the
+     *     raw literal (`foo`, `0`, `CURRENT_TIMESTAMP`) for everything
+     *     else — no quoting.
+     *
+     *   - MariaDB ≥ 10.2.7: returns the SQL expression text. NULL
+     *     defaults come back as the four-char string `"NULL"`; string
+     *     literals come wrapped in single quotes (`'foo'`, with
+     *     embedded `''` doubling SQL-style). Expression defaults
+     *     (CURRENT_TIMESTAMP, NOW(), arithmetic) come unquoted.
+     *
+     *   - "no default" on a nullable column: MySQL returns SQL NULL,
+     *     MariaDB returns the string `"NULL"`. Both should map to
+     *     PHP null with no expression flag.
+     *
+     * @return array{0: string|null, 1: bool}
+     */
+    private function normaliseDefault(mixed $raw): array
+    {
+        if ($raw === null) return [null, false];
+
+        $s = (string) $raw;
+
+        // MariaDB encodes "no default" as the literal text `NULL`.
+        if ($this->isMariaDb && $s === 'NULL') return [null, false];
+
+        // MariaDB-quoted string literal: peel one layer of single
+        // quotes and undo the SQL-style `''` doubling. MySQL ≤ 8.0
+        // never wraps with quotes, so this branch is MariaDB-only.
+        if ($this->isMariaDb && strlen($s) >= 2 && $s[0] === "'" && substr($s, -1) === "'") {
+            $inner = substr($s, 1, -1);
+            return [str_replace("''", "'", $inner), false];
+        }
+
+        // Recognised time-of-row expressions — flagged so the emitter
+        // renders them unquoted (CURRENT_TIMESTAMP, not 'CURRENT_TIMESTAMP').
+        $upper = strtoupper($s);
+        if (in_array($upper, ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME'], true)) {
+            return [$upper, true];
+        }
+
+        // MariaDB also reports `current_timestamp()` variants and
+        // arithmetic expressions unquoted. If it parses as numeric,
+        // it's a literal number; otherwise treat as expression so the
+        // emitter passes it through verbatim.
+        if ($this->isMariaDb && ! is_numeric($s)) {
+            return [$s, true];
+        }
+
+        return [$s, false];
     }
 
     /**
@@ -216,7 +270,7 @@ class MysqlIntrospector implements SchemaIntrospector
         if ($type === ColumnType::ENUM && preg_match("/enum\((.+)\)/i", $columnType, $m)) {
             // Members come quoted with single quotes and comma-separated.
             $enumValues = [];
-            foreach (str_getcsv($m[1], ',', "'") as $v) {
+            foreach (str_getcsv($m[1], ',', "'", '\\') as $v) {
                 $enumValues[] = (string) $v;
             }
         }
