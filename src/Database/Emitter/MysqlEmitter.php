@@ -123,7 +123,19 @@ class MysqlEmitter extends AbstractEmitter
         if ($col->autoIncrement) {
             $sql .= ' AUTO_INCREMENT';
         } elseif ($col->default !== null || $col->defaultIsExpression) {
-            $sql .= ' DEFAULT ' . $this->renderDefault($col);
+            // MySQL/MariaDB refuse DEFAULT on TEXT/BLOB/JSON/GEOMETRY
+            // ("BLOB, TEXT, GEOMETRY or JSON column 'x' can't have a
+            // default value"). MariaDB 10.2.1+ permits an expression
+            // default, but plain literal defaults are still rejected
+            // and the constraint is moot for a backup target. Drop
+            // the default silently — the destination column is still
+            // nullable / non-null per the source, just without a
+            // server-side filler.
+            if ($this->columnDefaultDisallowed($col->type)) {
+                // intentional no-op
+            } else {
+                $sql .= ' DEFAULT ' . $this->renderDefault($col);
+            }
         } elseif ($col->nullable) {
             // No-op; NULL default implicit
         }
@@ -169,6 +181,21 @@ class MysqlEmitter extends AbstractEmitter
                                       )) . ')',
             ColumnType::UUID       => 'CHAR(36)',
         };
+    }
+
+    /**
+     * MySQL family rejects literal DEFAULT values on the LOB-style
+     * types — TEXT (all sizes), BLOB (all sizes), JSON, and the
+     * spatial types. Centralised here so column DDL and any future
+     * ALTER TABLE path stay consistent.
+     */
+    private function columnDefaultDisallowed(ColumnType $t): bool
+    {
+        return in_array($t, [
+            ColumnType::TEXT, ColumnType::MEDIUMTEXT, ColumnType::LONGTEXT,
+            ColumnType::BLOB, ColumnType::MEDIUMBLOB, ColumnType::LONGBLOB,
+            ColumnType::JSON,
+        ], true);
     }
 
     private function renderDefault(Column $col): string

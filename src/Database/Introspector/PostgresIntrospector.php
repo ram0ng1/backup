@@ -104,6 +104,14 @@ class PostgresIntrospector implements SchemaIntrospector
                 } elseif (str_contains($upper, 'CURRENT_TIMESTAMP') || str_contains($upper, 'NOW()')) {
                     $defaultIsExpr = true;
                     $default = 'CURRENT_TIMESTAMP';
+                } elseif ($upper === 'TRUE' || $upper === 'FALSE') {
+                    // PG boolean literal: stash as a plain string so
+                    // the BOOL-aware path in each emitter picks it up
+                    // and renders the right per-dialect form (1/0 for
+                    // MySQL, TRUE/FALSE for PG). Marking it as an
+                    // expression would emit the bareword `false`
+                    // verbatim, which is invalid in MySQL DDL.
+                    $default = $upper === 'TRUE' ? 'true' : 'false';
                 } elseif (is_numeric($s)) {
                     $default = $s;
                 } else {
