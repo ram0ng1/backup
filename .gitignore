@@ -2,6 +2,7 @@ node_modules
 vendor
 js/dist/admin/
 composer.lock
+.phpunit.cache
 .vscode/settings.json
 .vscode
 .claude
@@ -14,6 +15,7 @@ FLARUM_2.0_CORE_PATTERNS.md
 FLARUM_DIRECTORY_STRUCTURE.md
 FLARUM_IMPLEMENTATION_EXAMPLES.md
 INDEX.md
+CLAUDE.md
 QUICK_REFERENCE.md
 FLARUM_CSS_FONTS_MANAGEMENT.md
 DEAD_CODE_REFACTOR_PLAYBOOK.md

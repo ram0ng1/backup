@@ -20,6 +20,16 @@ interface SqlEmitter
     /** Footer lines that re-enable any session toggles set in preamble(). */
     public function epilogue(): string;
 
+    /**
+     * `DROP TABLE IF EXISTS` for one table, in the dialect's safest
+     * form (e.g. PostgreSQL appends CASCADE). The dumper emits these
+     * for EVERY table up front, before any CREATE, so recreating a
+     * parent table can never trip over a leftover child table whose FK
+     * column type differs — and on PostgreSQL a referenced parent can
+     * be dropped without a manual child-first ordering.
+     */
+    public function emitDropTable(string $name): string;
+
     /** `CREATE TABLE` (and any auxiliary statements) for one neutral table. */
     public function emitSchema(Table $table): string;
 

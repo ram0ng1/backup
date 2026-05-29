@@ -4,6 +4,7 @@ namespace Ramon\Backup\Job;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
 use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Archive\Format;
@@ -37,13 +38,47 @@ class ImportJob
 {
     public const BUDGET_BYTES = 4_194_304;
 
+    /**
+     * Decryption private key for the current run. Held ONLY in memory
+     * and NEVER written to the job-state file: persisting a user-pasted
+     * private key in plaintext under storage/ would let any process that
+     * can read that directory steal it (and with it every past encrypted
+     * backup). The CLI keeps the same job instance across all ticks, so
+     * setting it once in start() is enough; the web flow re-supplies it
+     * on each tick request (over HTTPS) and TickImportController calls
+     * withPrivateKey() before runTick().
+     */
+    private ?string $privateKey = null;
+
+    /**
+     * The live database connection. Declared as the concrete
+     * {@see Connection} because the dump/restore path needs
+     * `getDriverName()` (via {@see Dialect::detect}), which the broader
+     * {@see ConnectionInterface} does not expose. The constructor takes
+     * the interface so Flarum's container (which binds
+     * `ConnectionInterface`, not the concrete class) can still inject it,
+     * then narrows once at this boundary.
+     */
+    protected Connection $db;
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
-        protected ConnectionInterface $db,
+        ConnectionInterface $db,
         protected BackupCipher $cipher,
         protected Config $config
     ) {
+        $this->db = $db;
+    }
+
+    /**
+     * Provide (or refresh) the in-memory decryption key for the next
+     * tick. A null/empty value clears it. Returns $this for chaining.
+     */
+    public function withPrivateKey(?string $privateKey): self
+    {
+        $this->privateKey = ($privateKey !== null && $privateKey !== '') ? $privateKey : null;
+        return $this;
     }
 
     /**
@@ -60,6 +95,11 @@ class ImportJob
         if (! $confirmReplace) {
             throw new RuntimeException('Import requires explicit replace-confirmation.');
         }
+
+        // Hold the decryption key in memory only — see the $privateKey
+        // property docblock. The CLI reuses this instance for every
+        // tick; the web flow re-sends the key per tick.
+        $this->withPrivateKey($privateKey);
 
         $dir = $this->paths->importJobDir($jobId);
         $upload = $dir.DIRECTORY_SEPARATOR.'upload.flarum';
@@ -79,7 +119,8 @@ class ImportJob
                 'dump'    => $dir.DIRECTORY_SEPARATOR.'dump.sql',
             ],
             'options' => [
-                'private_key'      => $privateKey ?: null,
+                // NB: the decryption private key is deliberately NOT
+                // stored here — it lives only in memory ($this->privateKey).
                 'confirm_replace'  => true,
                 'selection'        => $this->normaliseSelection($selection),
             ],
@@ -144,7 +185,7 @@ class ImportJob
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
             if ($reader->isEncrypted()) {
-                $reader->prepareEncrypted($this->cipher, $opts['private_key']);
+                $reader->prepareEncrypted($this->cipher, $this->privateKey);
             }
             $meta = $reader->meta();
             $state->set('archive_meta', $meta);
@@ -204,7 +245,7 @@ class ImportJob
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
             if ($reader->isEncrypted()) {
-                $reader->prepareEncrypted($this->cipher, $opts['private_key']);
+                $reader->prepareEncrypted($this->cipher, $this->privateKey);
             }
 
             // Skip past entries we've already fully written.

@@ -1,0 +1,20 @@
+# Keep dev-only files out of the composer release (composer archive /
+# Packagist tarball). `composer archive` and Packagist honour
+# `export-ignore` natively, so operators installing via `composer require`
+# receive only the runtime pieces (src/, migrations/, js/dist/, locale/,
+# less/, views/, extend.php, composer.json) and never the test suite.
+
+/tests                  export-ignore
+/phpunit.xml            export-ignore
+/.phpunit.cache         export-ignore
+/.github                export-ignore
+/.gitignore             export-ignore
+/.gitattributes         export-ignore
+/.vscode                export-ignore
+/.claude                export-ignore
+/.editorconfig          export-ignore
+
+# Internal playbooks / notes — exclude every root .md from the tarball…
+*.md                    export-ignore
+# …but keep the README visible on Packagist and in installed copies.
+README.md               -export-ignore

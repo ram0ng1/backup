@@ -20,6 +20,24 @@ abstract class AbstractEmitter implements SqlEmitter
         return '';
     }
 
+    public function emitDropTable(string $name): string
+    {
+        return 'DROP TABLE IF EXISTS ' . $this->quoteIdent($name)
+             . $this->dropTableSuffix() . $this->delimiter();
+    }
+
+    /**
+     * Dialect-specific trailer for a DROP TABLE statement. Empty for
+     * MySQL/MariaDB/SQLite (the restore suspends FK enforcement for the
+     * load, so any drop order is safe). PostgreSQL overrides this with
+     * ` CASCADE` so dropping a referenced parent also removes the
+     * dependent FK constraints instead of erroring.
+     */
+    protected function dropTableSuffix(): string
+    {
+        return '';
+    }
+
     /**
      * Default: no notes. Concrete emitters that record translation
      * notes (e.g. PG skipping FULLTEXT or oversized btree indexes)

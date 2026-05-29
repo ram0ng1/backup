@@ -48,6 +48,174 @@ jobs:
           [ "${#files[@]}" -gt 0 ] || { echo "Nenhum arquivo PHP encontrado"; exit 1; }
           printf '%s\0' "${files[@]}" | xargs -0 -n1 -P4 php -l
 
+  # ---------------------------------------------------------------------------
+  # Database transfer tests.
+  #
+  # The unit suite (Dialect detection, incl. the mariadb-driver regression)
+  # runs in every job since it needs no server. The integration suite drives
+  # the real dump/restore engine: for a given (source → target) pair to run,
+  # BOTH engines must be reachable, otherwise that direction is skipped. So:
+  #
+  #   • the per-engine jobs below pin a SERVER version and run that engine's
+  #     same-engine round-trip + every direction it shares with SQLite
+  #     (which is always available) — this is the per-version coverage;
+  #   • the `tests-all-directions` job brings up mysql + mariadb + postgres
+  #     + sqlite together so the FULL source×target matrix executes — this is
+  #     the "works in every direction" gate.
+  tests-mysql:
+    name: Tests · MySQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['8.0', '8.4']
+    services:
+      mysql:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: backup_xfer_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          coverage: none
+          tools: composer:v2
+      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - run: vendor/bin/phpunit --testdox
+
+  tests-mariadb:
+    name: Tests · MariaDB ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['10.11', '11.4']
+    services:
+      mariadb:
+        image: mariadb:${{ matrix.version }}
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+          MARIADB_DATABASE: backup_xfer_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      # Driver `mariadb` (illuminate v13's dedicated one) makes the
+      # connection report driverName=mariadb — the exact path that
+      # regressed. The harness picks it from the engine key, not env.
+      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          coverage: none
+          tools: composer:v2
+      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - run: vendor/bin/phpunit --testdox
+
+  tests-postgres:
+    name: Tests · PostgreSQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['14', '16', '17']
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: backup_xfer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      BACKUP_TEST_POSTGRES: 'host=127.0.0.1;port=5432;username=postgres;password=postgres;database=backup_xfer_test'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          coverage: none
+          tools: composer:v2
+      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - run: vendor/bin/phpunit --testdox
+
+  tests-all-directions:
+    name: Tests · all directions (mysql+mariadb+postgres+sqlite)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: backup_xfer_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+          MARIADB_DATABASE: backup_xfer_test
+        ports:
+          # Host 3307 to avoid colliding with mysql's 3306 mapping.
+          - 3307:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: backup_xfer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
+      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3307;username=root;password=;database=backup_xfer_test'
+      BACKUP_TEST_POSTGRES: 'host=127.0.0.1;port=5432;username=postgres;password=postgres;database=backup_xfer_test'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          coverage: none
+          tools: composer:v2
+      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - run: vendor/bin/phpunit --testdox
+
   js:
     name: JS (typecheck, format, build)
     runs-on: ubuntu-latest

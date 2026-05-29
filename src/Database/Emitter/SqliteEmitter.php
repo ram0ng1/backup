@@ -84,8 +84,9 @@ class SqliteEmitter extends AbstractEmitter
         $create = "CREATE TABLE $name (\n$body\n)";
         $create = preg_replace('/\s+/', ' ', $create);
 
-        $sql = 'DROP TABLE IF EXISTS ' . $name . $this->delimiter()
-             . $create . $this->delimiter();
+        // DROP is emitted up front for every table by the dumper, before
+        // any CREATE — see SqlEmitter::emitDropTable.
+        $sql = $create . $this->delimiter();
 
         foreach ($table->indexes as $idx) {
             if ($idx->primary) continue;
@@ -127,7 +128,11 @@ class SqliteEmitter extends AbstractEmitter
     {
         if ($isSingleAutoPk) {
             // Required exact form; ignore declared type/nullability.
-            return $this->quoteIdent($col->name) . ' INTEGER PRIMARY KEY AUTOINCREMENT';
+            // The explicit NOT NULL keeps the column reading back as
+            // not-null on re-introspection — without it SQLite reports
+            // `notnull = 0` for the rowid alias, which would later emit
+            // an invalid nullable PK when transferred to MySQL/Postgres.
+            return $this->quoteIdent($col->name) . ' INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT';
         }
 
         $sql = $this->quoteIdent($col->name) . ' ' . $this->columnTypeSql($col);

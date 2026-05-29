@@ -41,6 +41,14 @@ class TickImportController implements RequestHandlerInterface
             throw new ValidationException(['id' => 'Import job not found.']);
         }
 
+        // The decryption private key is never persisted to disk; the
+        // client re-sends it on each tick (over HTTPS) so the inspect /
+        // extract phases can decrypt without a plaintext copy ever
+        // touching storage/. Absent (unencrypted archive) → no-op.
+        $body = (array) $request->getParsedBody();
+        $privateKey = isset($body['private_key']) ? trim((string) $body['private_key']) : '';
+        $this->job->withPrivateKey($privateKey !== '' ? $privateKey : null);
+
         $state = JobState::load($stateFile);
         $this->job->runTick($state);
 
