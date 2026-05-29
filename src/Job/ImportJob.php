@@ -724,9 +724,21 @@ class ImportJob
             $id = (string) ($ext['id'] ?? '');
             $rel = (string) ($ext['relative'] ?? '');
             if ($id === '' || $rel === '') continue;
-            // Forbid funny stuff in the recorded path (we trust the
-            // meta header but it travelled across servers).
-            if (str_contains($rel, '..') || str_contains($rel, "\0")) continue;
+            // `relative` is read from the archive header, which is fully
+            // attacker-controlled (the archive "travelled across servers").
+            // Accept ONLY the two legitimate layouts — workbench/<dir> or
+            // vendor/<vendor>/<package> — with each segment strictly
+            // allow-listed and forbidden from starting with a dot (blocks
+            // `.`/`..`) or containing a backslash. Anything else is dropped
+            // rather than trusted, so a crafted manifest can't point an
+            // extension's files at an arbitrary directory (§13.7).
+            if (! preg_match(
+                '#\A(workbench/[A-Za-z0-9_-][A-Za-z0-9._-]*'
+                . '|vendor/[A-Za-z0-9_-][A-Za-z0-9._-]*/[A-Za-z0-9_-][A-Za-z0-9._-]*)\z#',
+                $rel
+            )) {
+                continue;
+            }
             $map[$id] = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $rel);
         }
         return $map;
@@ -789,6 +801,39 @@ class ImportJob
             @mkdir($base, 0755, true);
         }
 
-        return $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
+        $candidate = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
+
+        // Final confinement. The string blacklist at the top stops
+        // literal `../` traversal, but only canonicalising the resolved
+        // parent and re-checking the prefix catches an escape through a
+        // SYMLINKED path component (e.g. a symlinked `storage/` subdir on
+        // shared hosting). This mirrors the guard StoragePaths uses for
+        // downloads (§13.4/§13.5/§13.7); without it a write could follow
+        // a link outside the whitelisted root.
+        @mkdir(dirname($candidate), 0755, true);
+        if (! $this->isWithin($base, dirname($candidate))) {
+            return null;
+        }
+
+        return $candidate;
+    }
+
+    /**
+     * True when `$child` resolves to a path inside `$base`. Both sides go
+     * through realpath so symlinks are followed before comparison, and
+     * the compare is case-insensitive so Windows' drive-letter / casing
+     * differences don't produce a false negative (same approach as
+     * StoragePaths::backupFilePath).
+     */
+    private function isWithin(string $base, string $child): bool
+    {
+        $baseReal  = realpath($base);
+        $childReal = realpath($child);
+        if ($baseReal === false || $childReal === false) {
+            return false;
+        }
+        $a = strtolower(rtrim($childReal, '/\\')).DIRECTORY_SEPARATOR;
+        $b = strtolower(rtrim($baseReal, '/\\')).DIRECTORY_SEPARATOR;
+        return str_starts_with($a, $b);
     }
 }
