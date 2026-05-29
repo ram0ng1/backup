@@ -18,6 +18,8 @@ use Ramon\Backup\Api\Controller\StartImportController;
 use Ramon\Backup\Api\Controller\TickExportController;
 use Ramon\Backup\Api\Controller\TickImportController;
 use Ramon\Backup\Api\Controller\UploadImportController;
+use Ramon\Backup\Console\ExportCommand;
+use Ramon\Backup\Console\ImportCommand;
 
 return [
     (new Extend\Frontend('admin'))
@@ -25,6 +27,10 @@ return [
         ->js(__DIR__.'/js/dist/admin.js'),
 
     new Extend\Locales(__DIR__.'/locale'),
+
+    (new Extend\Console())
+        ->command(ExportCommand::class)
+        ->command(ImportCommand::class),
 
     (new Extend\Settings())
         // Public encryption key (base64). Empty string means encryption is off.

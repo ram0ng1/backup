@@ -101,6 +101,27 @@ class DatabaseDumper
         return $this->emitter->preamble();
     }
 
+    /**
+     * `DROP TABLE IF EXISTS` for every user table, emitted in one block
+     * right after the preamble and BEFORE any CREATE. Doing all drops up
+     * front (rather than a DROP immediately before each table's CREATE)
+     * makes a restore robust against any prior state on the destination:
+     * a leftover child table from an earlier, differently-typed dump
+     * can't make the parent's CREATE fail MySQL's FK column-type check,
+     * and PostgreSQL parents drop cleanly via CASCADE without a manual
+     * child-first ordering. FK enforcement is already suspended for the
+     * load (preamble + the restorer), so drop order here is irrelevant.
+     */
+    public function dropAllTables(): string
+    {
+        $sql = '';
+        foreach ($this->introspector->listTables() as $name) {
+            $this->assertSafeIdent($name);
+            $sql .= $this->emitter->emitDropTable($name);
+        }
+        return $sql;
+    }
+
     public function epilogue(): string
     {
         // Per-table fixups (PG sequence setval AND FK creation) are

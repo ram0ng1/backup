@@ -76,7 +76,7 @@ class ChunkImportController implements RequestHandlerInterface
         $body = $request->getBody();
         $body->rewind();
 
-        if (fseek_or_truncate($dest, $offset) === false) {
+        if ($this->ensureFileSize($dest, $offset) === false) {
             throw new ValidationException([
                 'chunk' => 'Failed to position staging file at offset '.$offset.'.',
             ]);
@@ -142,35 +142,35 @@ class ChunkImportController implements RequestHandlerInterface
         $data = json_decode($raw, true);
         return is_array($data) ? $data : [];
     }
-}
 
-/**
- * Pre-create / pre-extend the staging file to at least `$offset`
- * bytes. Without this, fseek on an `cb` mode handle won't grow the
- * file, and writes can land at the wrong offset.
- */
-function fseek_or_truncate(string $path, int $offset): int|false
-{
-    clearstatcache(true, $path);
-    $size = filesize($path);
-    if ($size === false) return false;
-    if ($size >= $offset) return $size;
+    /**
+     * Pre-create / pre-extend the staging file to at least `$offset`
+     * bytes. Without this, fseek on a `cb`-mode handle won't grow the
+     * file, and writes can land at the wrong offset.
+     */
+    private function ensureFileSize(string $path, int $offset): int|false
+    {
+        clearstatcache(true, $path);
+        $size = filesize($path);
+        if ($size === false) return false;
+        if ($size >= $offset) return $size;
 
-    // Extend with zero bytes up to the offset. We rarely take this
-    // path — only when chunks arrive out of order, which the client
-    // doesn't normally do but is allowed by the protocol.
-    $fh = @fopen($path, 'ab');
-    if ($fh === false) return false;
-    try {
-        $pad = $offset - $size;
-        $chunk = str_repeat("\0", min(64 * 1024, $pad));
-        while ($pad > 0) {
-            $w = fwrite($fh, substr($chunk, 0, min(strlen($chunk), $pad)));
-            if ($w === false || $w === 0) return false;
-            $pad -= $w;
+        // Extend with zero bytes up to the offset. We rarely take this
+        // path — only when chunks arrive out of order, which the client
+        // doesn't normally do but is allowed by the protocol.
+        $fh = @fopen($path, 'ab');
+        if ($fh === false) return false;
+        try {
+            $pad = $offset - $size;
+            $chunk = str_repeat("\0", min(64 * 1024, $pad));
+            while ($pad > 0) {
+                $w = fwrite($fh, substr($chunk, 0, min(strlen($chunk), $pad)));
+                if ($w === false || $w === 0) return false;
+                $pad -= $w;
+            }
+        } finally {
+            fclose($fh);
         }
-    } finally {
-        fclose($fh);
+        return $offset;
     }
-    return $offset;
 }

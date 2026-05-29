@@ -25,6 +25,22 @@ class MysqlEmitter extends AbstractEmitter
         return '`';
     }
 
+    /**
+     * MySQL/MariaDB treat backslash as an escape character inside string
+     * literals unless NO_BACKSLASH_ESCAPES is set — which our dump
+     * deliberately does not enable, so the .sql stays loadable by any
+     * client at its default mode. That means a literal backslash must be
+     * doubled in addition to the standard single-quote doubling;
+     * otherwise a value like `C:\path` or `a\b` silently drops the
+     * backslash (and `\'`, `\n` etc. would be mis-decoded) on restore.
+     * PostgreSQL and SQLite take the literal as-is, which is why only
+     * this emitter overrides the base behaviour.
+     */
+    protected function quoteString(string $value): string
+    {
+        return "'" . str_replace(['\\', "'"], ['\\\\', "''"], $value) . "'";
+    }
+
     public function targetTag(): string
     {
         return $this->dialect->value;
@@ -81,8 +97,10 @@ class MysqlEmitter extends AbstractEmitter
         $create = "CREATE TABLE $name (\n$body\n) DEFAULT CHARSET=utf8mb4";
         $create = preg_replace('/\s+/', ' ', $create);
 
-        return 'DROP TABLE IF EXISTS ' . $name . $this->delimiter()
-             . $create . $this->delimiter();
+        // DROP is emitted up front for every table by the dumper (see
+        // SqlEmitter::emitDropTable), so a re-import over an
+        // incompatible prior schema can't fail the FK type check.
+        return $create . $this->delimiter();
     }
 
     public function emitInserts(Table $table, array $rows): string
@@ -118,7 +136,11 @@ class MysqlEmitter extends AbstractEmitter
         if ($col->unsigned && $col->type->isInteger()) {
             $sql .= ' UNSIGNED';
         }
-        $sql .= $col->nullable ? ' NULL' : ' NOT NULL';
+        // An AUTO_INCREMENT column is implicitly NOT NULL and MySQL
+        // rejects a nullable PRIMARY KEY — force NOT NULL even if the
+        // source model reports the column nullable (e.g. a value dumped
+        // through SQLite, whose INTEGER PRIMARY KEY reads as notnull=0).
+        $sql .= ($col->nullable && ! $col->autoIncrement) ? ' NULL' : ' NOT NULL';
 
         if ($col->autoIncrement) {
             $sql .= ' AUTO_INCREMENT';
