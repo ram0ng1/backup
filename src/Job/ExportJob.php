@@ -4,6 +4,7 @@ namespace Ramon\Backup\Job;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
 use Ramon\Backup\Archive\ArchiveWriter;
 use Ramon\Backup\Archive\Format;
@@ -77,14 +78,25 @@ class ExportJob
         'vendor'       => true,
     ];
 
+    /**
+     * The live database connection. Declared as the concrete
+     * {@see Connection} because the dump path needs `getDriverName()`
+     * (via {@see Dialect::detect}), which {@see ConnectionInterface}
+     * does not expose. The constructor accepts the interface so Flarum's
+     * container (which binds `ConnectionInterface`, not the concrete
+     * class) can inject it, then narrows once here.
+     */
+    protected Connection $db;
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
-        protected ConnectionInterface $db,
+        ConnectionInterface $db,
         protected BackupCipher $cipher,
         protected Config $config,
         protected Inventory $inventory
     ) {
+        $this->db = $db;
     }
 
     /**
@@ -168,6 +180,7 @@ class ExportJob
                 'table_idx'      => 0,
                 'table_offset'   => 0,
                 'wrote_preamble' => false,
+                'wrote_drops'    => false,
                 'bundle_step'    => 'init',  // init | db_entry | files | trailer | done
                 'file_idx'       => 0,
                 'file_offset'    => 0,
@@ -370,6 +383,16 @@ class ExportJob
                 fwrite($fh, $sql);
                 $written += strlen($sql);
                 $cursor['wrote_preamble'] = true;
+            }
+
+            // Drop every table up front (before any CREATE) so a restore
+            // is robust against whatever schema currently exists on the
+            // destination. See DatabaseDumper::dropAllTables().
+            if (empty($cursor['wrote_drops'])) {
+                $sql = $dumper->dropAllTables();
+                fwrite($fh, $sql);
+                $written += strlen($sql);
+                $cursor['wrote_drops'] = true;
             }
 
             while ($written < self::BUDGET_BYTES && $cursor['table_idx'] < count($cursor['tables'])) {

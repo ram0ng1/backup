@@ -25,10 +25,11 @@ enum Dialect: string
     {
         $driver = $db->getDriverName();
         return match ($driver) {
-            'mysql'  => self::isMariaDb($db) ? self::MARIADB : self::MYSQL,
-            'pgsql'  => self::POSTGRES,
-            'sqlite' => self::SQLITE,
-            default  => throw new RuntimeException("Unsupported database driver: $driver"),
+            'mysql'   => self::isMariaDb($db) ? self::MARIADB : self::MYSQL,
+            'mariadb' => self::MARIADB,
+            'pgsql'   => self::POSTGRES,
+            'sqlite'  => self::SQLITE,
+            default   => throw new RuntimeException("Unsupported database driver: $driver"),
         };
     }
 

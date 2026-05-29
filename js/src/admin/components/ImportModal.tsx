@@ -770,9 +770,15 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         this.status.phase !== "error"
       ) {
         try {
-          const res = await app.request<ImportProgress>({
+          const res = await apiRequest<ImportProgress>({
             method: "POST",
             url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/tick`,
+            surface: false,
+            // The server never stores the decryption key on disk; we
+            // re-send it each tick so the inspect/extract phases can
+            // decrypt. Harmless (ignored) for unencrypted archives and
+            // once extraction is done.
+            body: { private_key: this.privateKey.trim() || null },
           });
           this.status = res;
           m.redraw();
@@ -810,9 +816,10 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   async cancel() {
     if (!this.inspect) return;
     try {
-      await app.request({
+      await apiRequest({
         method: "DELETE",
         url: `${apiUrl()}/backup/imports/${this.inspect.job_id}`,
+        surface: false,
       });
     } catch (e) {
       console.error("[backup] import cancel failed", e);
