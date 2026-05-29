@@ -59,14 +59,13 @@ class DownloadBackupController implements RequestHandlerInterface
         }
 
         $abs = $this->paths->backupFilePath($backup->filename);
-        if ($abs === null) {
+        if ($abs === null || ! is_file($abs)) {
+            // Deliberately generic: don't echo the absolute path or the
+            // (DB-stored, potentially tampered) filename back to the
+            // client — that only aids filesystem-layout recon. The
+            // specifics are available server-side via logs if needed.
             throw new ValidationException([
-                'file' => 'Backup file path could not be resolved (filename in DB: "'.$backup->filename.'").',
-            ]);
-        }
-        if (! is_file($abs)) {
-            throw new ValidationException([
-                'file' => 'Backup file is missing on disk: '.$abs,
+                'file' => 'Backup file is not available.',
             ]);
         }
 
