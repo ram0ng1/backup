@@ -125,7 +125,13 @@ class SqliteIntrospector implements SchemaIntrospector
             $columns[] = new Column(
                 name: (string) $r['name'],
                 type: $type,
-                nullable: ((int) ($r['notnull'] ?? 0)) === 0,
+                // A PRIMARY KEY column is never nullable on a target
+                // engine. SQLite reports `notnull = 0` for an INTEGER
+                // PRIMARY KEY (the rowid alias) even though it can't hold
+                // NULL; trusting that flag verbatim would emit an invalid
+                // `NULL AUTO_INCREMENT` / `NULL ... IDENTITY` PK when this
+                // table is later transferred to MySQL or PostgreSQL.
+                nullable: ((int) ($r['notnull'] ?? 0)) === 0 && ! $isPk,
                 autoIncrement: $autoIncrement,
                 length: $length,
                 precision: null,

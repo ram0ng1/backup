@@ -4,6 +4,7 @@ namespace Ramon\Backup\Job;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
 use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Archive\Format;
@@ -37,13 +38,47 @@ class ImportJob
 {
     public const BUDGET_BYTES = 4_194_304;
 
+    /**
+     * Decryption private key for the current run. Held ONLY in memory
+     * and NEVER written to the job-state file: persisting a user-pasted
+     * private key in plaintext under storage/ would let any process that
+     * can read that directory steal it (and with it every past encrypted
+     * backup). The CLI keeps the same job instance across all ticks, so
+     * setting it once in start() is enough; the web flow re-supplies it
+     * on each tick request (over HTTPS) and TickImportController calls
+     * withPrivateKey() before runTick().
+     */
+    private ?string $privateKey = null;
+
+    /**
+     * The live database connection. Declared as the concrete
+     * {@see Connection} because the dump/restore path needs
+     * `getDriverName()` (via {@see Dialect::detect}), which the broader
+     * {@see ConnectionInterface} does not expose. The constructor takes
+     * the interface so Flarum's container (which binds
+     * `ConnectionInterface`, not the concrete class) can still inject it,
+     * then narrows once at this boundary.
+     */
+    protected Connection $db;
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
-        protected ConnectionInterface $db,
+        ConnectionInterface $db,
         protected BackupCipher $cipher,
         protected Config $config
     ) {
+        $this->db = $db;
+    }
+
+    /**
+     * Provide (or refresh) the in-memory decryption key for the next
+     * tick. A null/empty value clears it. Returns $this for chaining.
+     */
+    public function withPrivateKey(?string $privateKey): self
+    {
+        $this->privateKey = ($privateKey !== null && $privateKey !== '') ? $privateKey : null;
+        return $this;
     }
 
     /**
@@ -60,6 +95,11 @@ class ImportJob
         if (! $confirmReplace) {
             throw new RuntimeException('Import requires explicit replace-confirmation.');
         }
+
+        // Hold the decryption key in memory only — see the $privateKey
+        // property docblock. The CLI reuses this instance for every
+        // tick; the web flow re-sends the key per tick.
+        $this->withPrivateKey($privateKey);
 
         $dir = $this->paths->importJobDir($jobId);
         $upload = $dir.DIRECTORY_SEPARATOR.'upload.flarum';
@@ -79,7 +119,8 @@ class ImportJob
                 'dump'    => $dir.DIRECTORY_SEPARATOR.'dump.sql',
             ],
             'options' => [
-                'private_key'      => $privateKey ?: null,
+                // NB: the decryption private key is deliberately NOT
+                // stored here — it lives only in memory ($this->privateKey).
                 'confirm_replace'  => true,
                 'selection'        => $this->normaliseSelection($selection),
             ],
@@ -144,7 +185,7 @@ class ImportJob
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
             if ($reader->isEncrypted()) {
-                $reader->prepareEncrypted($this->cipher, $opts['private_key']);
+                $reader->prepareEncrypted($this->cipher, $this->privateKey);
             }
             $meta = $reader->meta();
             $state->set('archive_meta', $meta);
@@ -204,7 +245,7 @@ class ImportJob
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
             if ($reader->isEncrypted()) {
-                $reader->prepareEncrypted($this->cipher, $opts['private_key']);
+                $reader->prepareEncrypted($this->cipher, $this->privateKey);
             }
 
             // Skip past entries we've already fully written.
@@ -683,9 +724,21 @@ class ImportJob
             $id = (string) ($ext['id'] ?? '');
             $rel = (string) ($ext['relative'] ?? '');
             if ($id === '' || $rel === '') continue;
-            // Forbid funny stuff in the recorded path (we trust the
-            // meta header but it travelled across servers).
-            if (str_contains($rel, '..') || str_contains($rel, "\0")) continue;
+            // `relative` is read from the archive header, which is fully
+            // attacker-controlled (the archive "travelled across servers").
+            // Accept ONLY the two legitimate layouts — workbench/<dir> or
+            // vendor/<vendor>/<package> — with each segment strictly
+            // allow-listed and forbidden from starting with a dot (blocks
+            // `.`/`..`) or containing a backslash. Anything else is dropped
+            // rather than trusted, so a crafted manifest can't point an
+            // extension's files at an arbitrary directory (§13.7).
+            if (! preg_match(
+                '#\A(workbench/[A-Za-z0-9_-][A-Za-z0-9._-]*'
+                . '|vendor/[A-Za-z0-9_-][A-Za-z0-9._-]*/[A-Za-z0-9_-][A-Za-z0-9._-]*)\z#',
+                $rel
+            )) {
+                continue;
+            }
             $map[$id] = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $rel);
         }
         return $map;
@@ -748,6 +801,39 @@ class ImportJob
             @mkdir($base, 0755, true);
         }
 
-        return $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
+        $candidate = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
+
+        // Final confinement. The string blacklist at the top stops
+        // literal `../` traversal, but only canonicalising the resolved
+        // parent and re-checking the prefix catches an escape through a
+        // SYMLINKED path component (e.g. a symlinked `storage/` subdir on
+        // shared hosting). This mirrors the guard StoragePaths uses for
+        // downloads (§13.4/§13.5/§13.7); without it a write could follow
+        // a link outside the whitelisted root.
+        @mkdir(dirname($candidate), 0755, true);
+        if (! $this->isWithin($base, dirname($candidate))) {
+            return null;
+        }
+
+        return $candidate;
+    }
+
+    /**
+     * True when `$child` resolves to a path inside `$base`. Both sides go
+     * through realpath so symlinks are followed before comparison, and
+     * the compare is case-insensitive so Windows' drive-letter / casing
+     * differences don't produce a false negative (same approach as
+     * StoragePaths::backupFilePath).
+     */
+    private function isWithin(string $base, string $child): bool
+    {
+        $baseReal  = realpath($base);
+        $childReal = realpath($child);
+        if ($baseReal === false || $childReal === false) {
+            return false;
+        }
+        $a = strtolower(rtrim($childReal, '/\\')).DIRECTORY_SEPARATOR;
+        $b = strtolower(rtrim($baseReal, '/\\')).DIRECTORY_SEPARATOR;
+        return str_starts_with($a, $b);
     }
 }
