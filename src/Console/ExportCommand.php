@@ -6,6 +6,7 @@ use Flarum\Console\AbstractCommand;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\JobState;
 use Ramon\Backup\StoragePaths;
+use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
@@ -148,17 +149,50 @@ class ExportCommand extends AbstractCommand
         return array_values(array_filter(array_map('trim', explode(',', (string) $value))));
     }
 
+    /**
+     * Pump runTick() to completion while rendering a single, in-place
+     * status line: a spinner (proves liveness during the long DB-dump
+     * phase, where the byte-percent stays pinned), the percent, and the
+     * job message — which now carries the per-table row counter, so a
+     * huge table visibly advances "1,200,000/3,400,000 rows" instead of
+     * looking frozen. Symfony's ProgressBar throttles itself on
+     * non-decorated output (piped to a file), so this doesn't spam logs.
+     */
     private function driveToCompletion(JobState $state): JobState
     {
-        $lastMessage = null;
-        while (! in_array($state->get('phase'), ['done', 'error'], true)) {
-            $state = $this->job->runTick($state);
-            $message = (string) $state->get('message');
-            if ($message !== $lastMessage) {
-                $this->output->writeln($message);
-                $lastMessage = $message;
+        $frames = ['-', '\\', '|', '/'];
+        $tick = 0;
+        ProgressBar::setPlaceholderFormatterDefinition(
+            'spinner',
+            function () use (&$tick, $frames) {
+                return $frames[$tick % count($frames)];
             }
+        );
+
+        $bar = new ProgressBar($this->output, 100);
+        $bar->setFormat(' %spinner% %percent:3s%% — %message%');
+        $bar->setMessage('Preparing…');
+        $bar->start();
+
+        try {
+            while (! in_array($state->get('phase'), ['done', 'error'], true)) {
+                $state = $this->job->runTick($state);
+                $tick++;
+                $progress = (array) $state->get('progress', []);
+                $percent = (int) round((float) ($progress['percent'] ?? 0));
+                $bar->setMessage((string) $state->get('message'));
+                $bar->setProgress(min(100, max(0, $percent)));
+                $bar->display();
+            }
+
+            if ($state->get('phase') === 'done') {
+                $bar->setProgress(100);
+            }
+            $bar->finish();
+        } finally {
+            $this->output->writeln('');
         }
+
         return $state;
     }
 

@@ -32,11 +32,13 @@ final class Transfer
             $sql .= $dumper->dumpSchema($table);
 
             $offset = 0;
+            $afterKey = null;
             while (true) {
-                $batch = $dumper->dumpDataBatch($table, $offset);
+                $batch = $dumper->dumpDataBatch($table, $offset, $afterKey);
                 if ($batch['consumed'] === 0) break;
                 $sql .= $batch['sql'];
                 $offset += $batch['consumed'];
+                $afterKey = $batch['after_key'];
             }
         }
         $sql .= $dumper->epilogue();

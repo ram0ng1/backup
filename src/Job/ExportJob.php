@@ -179,6 +179,8 @@ class ExportJob
                 'tables'         => [],
                 'table_idx'      => 0,
                 'table_offset'   => 0,
+                'table_key'      => null,
+                'table_total'    => 0,
                 'wrote_preamble' => false,
                 'wrote_drops'    => false,
                 'bundle_step'    => 'init',  // init | db_entry | files | trailer | done
@@ -399,23 +401,28 @@ class ExportJob
                 $table = $cursor['tables'][$cursor['table_idx']];
 
                 if ($cursor['table_offset'] === 0) {
-                    // First touch on this table — emit DDL.
+                    // First touch on this table — count rows (once, for the
+                    // progress readout) then emit DDL.
+                    $cursor['table_total'] = $dumper->countRows($table);
                     $sql = $dumper->dumpSchema($table);
                     fwrite($fh, $sql);
                     $written += strlen($sql);
                 }
 
-                $batch = $dumper->dumpDataBatch($table, $cursor['table_offset']);
+                $batch = $dumper->dumpDataBatch($table, $cursor['table_offset'], $cursor['table_key'] ?? null);
                 if ($batch['consumed'] === 0) {
                     // Table exhausted — advance to the next.
                     $cursor['table_idx']++;
                     $cursor['table_offset'] = 0;
+                    $cursor['table_key'] = null;
+                    $cursor['table_total'] = 0;
                     continue;
                 }
 
                 fwrite($fh, $batch['sql']);
                 $written += strlen($batch['sql']);
                 $cursor['table_offset'] += $batch['consumed'];
+                $cursor['table_key'] = $batch['after_key'];
             }
 
             $allTablesDone = $cursor['table_idx'] >= count($cursor['tables']);
@@ -439,11 +446,37 @@ class ExportJob
         )));
         $state->set('db_warnings', $merged);
 
-        $state->set('message',
-            $allTablesDone
-                ? 'Database dump complete. Bundling…'
-                : "Dumping database… ({$cursor['table_idx']}/".count($cursor['tables']).')'
-        );
+        if ($allTablesDone) {
+            $state->set('message', 'Database dump complete. Bundling…');
+        } else {
+            $tableCount = count($cursor['tables']);
+            $idx        = (int) $cursor['table_idx'];
+            $name       = $cursor['tables'][$idx] ?? '?';
+            $rowsDone   = (int) $cursor['table_offset'];
+            $rowsTotal  = (int) ($cursor['table_total'] ?? 0);
+
+            $rows = $rowsTotal > 0
+                ? number_format($rowsDone) . '/' . number_format($rowsTotal) . ' rows'
+                : number_format($rowsDone) . ' rows';
+
+            $state->set('message', sprintf(
+                'Dumping database… table %d/%d (%s) — %s',
+                $idx + 1,
+                $tableCount,
+                $name,
+                $rows
+            ));
+        }
+
+        // Structured per-table progress so a poller (admin UI) can render
+        // its own indicator instead of parsing the message string.
+        $state->set('db_progress', [
+            'table_index' => (int) $cursor['table_idx'],
+            'table_count' => count($cursor['tables']),
+            'table_name'  => $cursor['tables'][$cursor['table_idx']] ?? null,
+            'rows_done'   => (int) $cursor['table_offset'],
+            'rows_total'  => (int) ($cursor['table_total'] ?? 0),
+        ]);
 
         if ($allTablesDone) {
             // Now that the dump.sql is sized, fold its bytes into the
