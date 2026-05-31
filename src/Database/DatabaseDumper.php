@@ -7,6 +7,7 @@ use Ramon\Backup\Database\Emitter\EmitterFactory;
 use Ramon\Backup\Database\Emitter\SqlEmitter;
 use Ramon\Backup\Database\Introspector\IntrospectorFactory;
 use Ramon\Backup\Database\Introspector\SchemaIntrospector;
+use Ramon\Backup\Database\Schema\ColumnType;
 use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
@@ -43,8 +44,25 @@ class DatabaseDumper
     public const PHASE_DATA   = 'data';
     public const PHASE_DONE   = 'done';
 
-    /** Rows pulled from a table per SELECT, regardless of byte budget. */
+    /**
+     * Linhas por SELECT para tabelas que podem guardar valores grandes
+     * (famílias TEXT/BLOB/JSON ou VARCHAR/BINARY largos) — pequeno para
+     * um lote nunca bufferizar dezenas de MB em PHP.
+     */
     private const ROWS_PER_QUERY = 200;
+
+    /**
+     * Linhas por SELECT para tabelas só com escalares limitados (ints,
+     * datas, strings curtas) — caso das grandes pivôs como `post_likes`.
+     * O lote grande derruba o número de idas ao banco ~25×, o que faz uma
+     * tabela de milhões de linhas ser dumpada em segundos. Seguro em
+     * memória porque cada linha é minúscula; o keyset (ver dumpDataBatch)
+     * é o que mantém um lote tão profundo ainda barato de buscar.
+     */
+    private const ROWS_PER_QUERY_BULK = 5000;
+
+    /** Colunas string/binárias acima deste tamanho contam como "grandes". */
+    private const WIDE_STRING_THRESHOLD = 1024;
 
     private SchemaIntrospector $introspector;
     private SqlEmitter $emitter;
@@ -155,36 +173,77 @@ class DatabaseDumper
     }
 
     /**
-     * Pull the next batch of rows from `$table` starting at `$offset`,
-     * returning the SQL string and the number of rows consumed. The
-     * caller accumulates offsets across ticks.
+     * Devolve o próximo lote de linhas de `$table`, retornando o SQL, a
+     * quantidade de linhas consumidas e a chave da última linha emitida
+     * para o próximo tick continuar de onde parou.
      *
-     * Empty SQL with `consumed == 0` signals "table exhausted".
+     * Tabelas com primary key usam paginação por keyset, com o predicado
+     * na forma EXPANDIDA `a > ? OR (a = ? AND b > ?)` (ver keysetPredicate)
+     * em vez da tupla `(a, b) > (?, ?)`. A tupla é mais limpa, mas o
+     * otimizador do MySQL 8 NÃO a converte em range scan — ela vira
+     * `type=index` (varredura cheia do índice) e degrada para O(n²) em
+     * chaves profundas, reproduzindo o "travado em 1,4M". A forma
+     * expandida faz `type=range` (seek no índice), O(n) no total, e é
+     * portável entre MySQL, MariaDB, PostgreSQL e SQLite.
      *
-     * @return array{sql: string, consumed: int}
+     * Tabelas sem primary key caem no fallback por `$offset` — correção
+     * acima de velocidade; são raras e geralmente pequenas.
+     *
+     * `$afterKey` é o mapa coluna→valor da PK da última linha do tick
+     * anterior (null no primeiro toque). SQL vazio com `consumed == 0`
+     * sinaliza "tabela esgotada".
+     *
+     * @param array<string, mixed>|null $afterKey
+     * @return array{sql: string, consumed: int, after_key: array<string, mixed>|null}
      */
-    public function dumpDataBatch(string $table, int $offset): array
+    public function dumpDataBatch(string $table, int $offset, ?array $afterKey = null): array
     {
         $this->assertSafeIdent($table);
         $described = $this->describe($table);
+        $tableQ    = $this->quoteIdentForRead($table);
 
-        // Stable-ordered SELECT so OFFSET is meaningful across ticks.
-        // Tables without a primary key fall back to natural order; this
-        // is fine on read-only sources during a dump.
-        $orderBy = $this->buildOrderBy($described);
-        $tableQ  = $this->quoteIdentForRead($table);
-        $sql     = "SELECT * FROM $tableQ" . $orderBy . " LIMIT ? OFFSET ?";
+        if (empty($described->primaryKey)) {
+            $sql  = "SELECT * FROM $tableQ LIMIT ? OFFSET ?";
+            $rows = $this->db->select($sql, [self::ROWS_PER_QUERY, $offset]);
+            if (empty($rows)) {
+                return ['sql' => '', 'consumed' => 0, 'after_key' => null];
+            }
 
-        $rows = $this->db->select($sql, [self::ROWS_PER_QUERY, $offset]);
+            $rowsAsArrays = array_map(fn ($r) => (array) $r, $rows);
+            return [
+                'sql'       => $this->emitter->emitInserts($described, $rowsAsArrays),
+                'consumed'  => count($rows),
+                'after_key' => null,
+            ];
+        }
+
+        $pk        = $described->primaryKey;
+        $orderCols = array_map(fn ($c) => $this->quoteIdentForRead($c), $pk);
+        $orderBy   = ' ORDER BY ' . implode(', ', $orderCols);
+
+        $bindings = [];
+        $where = $afterKey !== null
+            ? ' WHERE ' . $this->keysetPredicate($pk, $orderCols, $afterKey, $bindings)
+            : '';
+        $bindings[] = $this->batchSizeFor($described);
+
+        $sql  = "SELECT * FROM $tableQ$where$orderBy LIMIT ?";
+        $rows = $this->db->select($sql, $bindings);
         if (empty($rows)) {
-            return ['sql' => '', 'consumed' => 0];
+            return ['sql' => '', 'consumed' => 0, 'after_key' => $afterKey];
         }
 
         $rowsAsArrays = array_map(fn ($r) => (array) $r, $rows);
-        $emitted = $this->emitter->emitInserts($described, $rowsAsArrays);
+        $last    = $rowsAsArrays[count($rowsAsArrays) - 1];
+        $nextKey = [];
+        foreach ($pk as $col) {
+            $nextKey[$col] = $last[$col];
+        }
+
         return [
-            'sql'      => $emitted,
-            'consumed' => count($rows),
+            'sql'       => $this->emitter->emitInserts($described, $rowsAsArrays),
+            'consumed'  => count($rows),
+            'after_key' => $nextKey,
         ];
     }
 
@@ -215,6 +274,88 @@ class DatabaseDumper
         if (! preg_match('/^[A-Za-z0-9_]+$/', $ident)) {
             throw new RuntimeException('Invalid input');
         }
+    }
+
+    /**
+     * Conta as linhas de `$table` na fonte. Usado pelo driver de export
+     * para mostrar progresso por tabela ("linha X de Y") no CLI e no
+     * admin. Chamado uma vez por tabela (no primeiro toque), então o
+     * custo do `COUNT(*)` — uma varredura de índice em InnoDB — é pago
+     * uma única vez por tabela, não por lote.
+     */
+    public function countRows(string $table): int
+    {
+        $this->assertSafeIdent($table);
+        $tableQ = $this->quoteIdentForRead($table);
+        $row = $this->db->selectOne("SELECT COUNT(*) AS c FROM $tableQ");
+        if (is_object($row)) {
+            return (int) ($row->c ?? 0);
+        }
+        return (int) (is_array($row) ? ($row['c'] ?? 0) : 0);
+    }
+
+    /**
+     * Monta o predicado de keyset na forma lexicográfica expandida para
+     * uma PK de N colunas:
+     *
+     *   (a > ?)
+     *   OR (a = ? AND b > ?)
+     *   OR (a = ? AND b = ? AND c > ?)
+     *
+     * Cada cláusula usa apenas igualdades nas colunas anteriores e um `>`
+     * na coluna corrente, o que o otimizador resolve como range scan no
+     * índice da PK — ao contrário da tupla `(a,b,…) > (?,?,…)`. Os
+     * bindings são anexados em `$bindings` na MESMA ordem dos `?`.
+     *
+     * @param list<string>             $pk         nomes crus das colunas da PK
+     * @param list<string>             $orderCols  os mesmos nomes, já quotados
+     * @param array<string, mixed>     $afterKey   valores da última linha
+     * @param list<mixed>              $bindings   acumulador (por referência)
+     */
+    private function keysetPredicate(array $pk, array $orderCols, array $afterKey, array &$bindings): string
+    {
+        $clauses = [];
+        $count = count($pk);
+        for ($i = 0; $i < $count; $i++) {
+            $conds = [];
+            for ($j = 0; $j < $i; $j++) {
+                $conds[] = $orderCols[$j] . ' = ?';
+                $bindings[] = $afterKey[$pk[$j]];
+            }
+            $conds[] = $orderCols[$i] . ' > ?';
+            $bindings[] = $afterKey[$pk[$i]];
+            $clauses[] = '(' . implode(' AND ', $conds) . ')';
+        }
+        return '(' . implode(' OR ', $clauses) . ')';
+    }
+
+    /**
+     * Escolhe o tamanho do lote de leitura. Qualquer coluna potencialmente
+     * grande (TEXT/BLOB/JSON, ou VARCHAR/BINARY acima de
+     * WIDE_STRING_THRESHOLD) força o lote pequeno para limitar a memória
+     * por batch; tabelas só com escalares limitados usam o lote grande.
+     */
+    private function batchSizeFor(Table $table): int
+    {
+        foreach ($table->columns as $col) {
+            $type = $col->type;
+            $unbounded = in_array($type, [
+                ColumnType::TEXT, ColumnType::MEDIUMTEXT, ColumnType::LONGTEXT,
+                ColumnType::BLOB, ColumnType::MEDIUMBLOB, ColumnType::LONGBLOB,
+                ColumnType::JSON,
+            ], true);
+            if ($unbounded) {
+                return self::ROWS_PER_QUERY;
+            }
+            $bounded = in_array($type, [
+                ColumnType::CHAR, ColumnType::VARCHAR,
+                ColumnType::BINARY, ColumnType::VARBINARY,
+            ], true);
+            if ($bounded && (int) ($col->length ?? 0) > self::WIDE_STRING_THRESHOLD) {
+                return self::ROWS_PER_QUERY;
+            }
+        }
+        return self::ROWS_PER_QUERY_BULK;
     }
 
     private function buildOrderBy(Table $table): string
