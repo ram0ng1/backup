@@ -72,7 +72,8 @@ class MysqlIntrospector implements SchemaIntrospector
         $rows = $this->db->select(
             "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
                     COLUMN_DEFAULT, EXTRA, CHARACTER_MAXIMUM_LENGTH,
-                    NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_COMMENT
+                    NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_COMMENT,
+                    GENERATION_EXPRESSION
              FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
              ORDER BY ORDINAL_POSITION",
@@ -91,13 +92,18 @@ class MysqlIntrospector implements SchemaIntrospector
             $unsigned  = str_contains($colType, 'unsigned');
             $columnName = (string) $r['COLUMN_NAME'];
 
-            // Generated columns store an expression that's evaluated
-            // server-side. We can copy the values (PG/SQLite see them
-            // as plain columns), but the GENERATION expression itself
-            // would only make sense to MySQL/MariaDB and is dropped
-            // silently by the emitters. Warn so the admin knows the
-            // computed semantics won't follow the data.
-            if (str_contains($extra, 'generated')) {
+            // Generated (computed) columns store an expression evaluated
+            // server-side. We can copy the materialised values (PG/SQLite
+            // see them as plain columns), but the expression itself only
+            // makes sense to MySQL/MariaDB and is dropped by the emitters,
+            // so warn the admin. Detection MUST use GENERATION_EXPRESSION,
+            // not EXTRA: on MySQL 8 a plain `DEFAULT CURRENT_TIMESTAMP`
+            // column reports EXTRA `DEFAULT_GENERATED` — which contains the
+            // substring "generated" and used to trip a false positive on
+            // every `created_at`. GENERATION_EXPRESSION is non-empty ONLY
+            // for real VIRTUAL/STORED generated columns.
+            $generationExpr = trim((string) ($r['GENERATION_EXPRESSION'] ?? ''));
+            if ($generationExpr !== '') {
                 $this->warnings[] = sprintf(
                     "Column `%s`.`%s` is a generated column; its expression is not portable across engines and will not be recreated on the destination — only the materialised values are copied.",
                     $table,
