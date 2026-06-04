@@ -125,10 +125,29 @@ class StoragePaths
         @rmdir($dir);
     }
 
+    /**
+     * Create one of our storage directories, owner-only (0700).
+     *
+     * Everything under here is sensitive: finalised `.flarum` archives
+     * in backups/, and — in backup-tmp/ — the decrypted `dump.sql` (the
+     * whole database in plaintext, password hashes and emails included),
+     * the uploaded archive, and the job state. None of it is ever read
+     * directly by the web server: downloads are streamed by PHP itself
+     * (see DownloadBackupController). So no group/other access is needed,
+     * and 0700 stops another account on a shared host from reading these
+     * files — the same shared-host threat model the import key handling
+     * guards against (see ImportJob::$privateKey).
+     *
+     * NB: only newly created directories get 0700; an existing dir keeps
+     * whatever perms it already has, so this can't disrupt a live install.
+     * Created with explicit 0700 (umask only ever *removes* bits, and
+     * 0700 has none in the group/other range, so the result is exactly
+     * 0700 regardless of the server's umask).
+     */
     private function ensureDir(string $dir): void
     {
         if (! is_dir($dir)) {
-            @mkdir($dir, 0755, true);
+            @mkdir($dir, 0700, true);
         }
     }
 
