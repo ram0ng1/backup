@@ -193,6 +193,10 @@ class ExportJob
             // across ticks and surfaced on the completion screen so
             // the admin knows what didn't survive verbatim.
             'db_warnings'   => [],
+            // Resumable scan plan — built lazily on the first scan tick
+            // (see runScan/buildScanPlan), then advanced one target per
+            // tick so no single request walks the whole install.
+            'scan'          => [],
         ];
 
         return JobState::create($dir.DIRECTORY_SEPARATOR.'job.json', $initial);
@@ -226,131 +230,246 @@ class ExportJob
     }
 
     /**
-     * Phase 1 — enumerate every file we'll bundle, compute total size,
-     * and seed the DB cursor. One tick is plenty for the scan because
-     * we're only stat-ing files, not reading them.
+     * Phase 1 — enumerate every file we'll bundle and compute total
+     * size, then seed the DB cursor.
+     *
+     * The scan is chunked across ticks: a plan of "targets" (each asset
+     * root, the storage root, one entry per selected extension, and the
+     * composer manifest) is built once, then ONE target is walked per
+     * tick and its files appended to an NDJSON manifest. This bounds a
+     * single HTTP request to one root's stat walk instead of the whole
+     * install at once, so a large multi-extension forum no longer risks
+     * blowing max_execution_time on the very first tick. (A single
+     * pathological root — typically a huge storage/ tree — is still
+     * walked in one tick; installs that large should run the CLI
+     * exporter, which has no request timeout.)
      */
     private function runScan(JobState $state): void
     {
+        $scan = (array) $state->get('scan', []);
+        if (empty($scan['built'])) {
+            $scan = $this->buildScanPlan($state);
+            $state->set('scan', $scan);
+        }
+
+        $targets = $scan['targets'];
+        $idx     = (int) $scan['idx'];
+
+        if ($idx < count($targets)) {
+            $this->scanOneTarget($state, $scan, $targets[$idx]);
+            $scan['idx'] = $idx + 1;
+            $state->set('scan', $scan);
+
+            $progress = $state->get('progress');
+            $progress['total_files'] = (int) $scan['files'];
+            $progress['total_bytes'] = (int) $scan['bytes'];
+            $state->set('progress', $progress);
+
+            $state->set('message', sprintf('Scanning… (%d/%d)', $idx + 1, count($targets)));
+            $state->save();
+            return; // stay in 'scan'; the next tick processes the next target
+        }
+
+        $this->finalizeScan($state, $scan);
+    }
+
+    /**
+     * Build the (persisted) list of scan targets from the content
+     * selection, and clear any stale manifest so the NDJSON appends
+     * start from a clean slate. The selection drives WHICH extensions go
+     * in; the inventory drives WHERE they live (workbench/ for local
+     * dev, vendor/ for composer-managed).
+     *
+     * @return array{built: bool, targets: list<array<string, mixed>>, idx: int, files: int, bytes: int, counts: array{asset: int, storage: int, extension: int}, ext_descriptors: list<array<string, mixed>>, has_composer: bool}
+     */
+    private function buildScanPlan(JobState $state): array
+    {
         $contents = $state->get('contents');
-        $files = [];
-        $totalBytes = 0;
+        @unlink($state->get('paths')['manifest']);
+
+        $targets = [];
 
         if (! empty($contents['assets'])) {
-            $assetsBase = rtrim($this->appPaths->public, '/\\').DIRECTORY_SEPARATOR.'assets';
-            $this->collectFiles($assetsBase, 'assets', $files, $totalBytes);
+            $targets[] = [
+                'kind' => 'assets',
+                'base' => rtrim($this->appPaths->public, '/\\').DIRECTORY_SEPARATOR.'assets',
+            ];
         }
         if (! empty($contents['storage'])) {
             $storageBase = rtrim($this->appPaths->storage, '/\\');
-            // Skip the directories that hold OUR backup data — backing
-            // up backups is circular.
-            $this->collectFiles($storageBase, 'storage', $files, $totalBytes, [
-                $storageBase.DIRECTORY_SEPARATOR.'backups',
-                $storageBase.DIRECTORY_SEPARATOR.'backup-tmp',
-            ]);
+            $targets[] = [
+                'kind' => 'storage',
+                'base' => $storageBase,
+                // Skip the directories that hold OUR backup data —
+                // backing up backups is circular.
+                'skip' => [
+                    $storageBase.DIRECTORY_SEPARATOR.'backups',
+                    $storageBase.DIRECTORY_SEPARATOR.'backup-tmp',
+                ],
+            ];
         }
-        // Per-extension bundling. The selection drives WHICH
-        // extensions go in; the inventory drives WHERE they live
-        // (workbench/ for local dev, vendor/ for composer-managed).
-        // We bundle each extension's files under
-        //   extensions/<id>/...
-        // and record the original location in $bundledExts so the
-        // import side can put vendor extensions back into vendor/
-        // and workbench extensions back into workbench/.
-        $extSelection = $contents['extensions'] ?? false;
-        $bundledExts = [];
 
+        $extSelection = $contents['extensions'] ?? false;
         if ($extSelection !== false) {
-            $allExts = $this->inventory->list();
-            $wantAll = $extSelection === true;
+            $wantAll   = $extSelection === true;
             $wantedIds = is_array($extSelection) ? array_flip($extSelection) : [];
 
-            foreach ($allExts as $ext) {
+            foreach ($this->inventory->list() as $ext) {
                 if (! $wantAll && ! isset($wantedIds[$ext['id']])) continue;
+                $targets[] = [
+                    'kind' => 'ext',
+                    'base' => $ext['path'],
+                    'ext'  => [
+                        'id'       => $ext['id'],
+                        'name'     => $ext['name'],
+                        'title'    => $ext['title'],
+                        'version'  => $ext['version'],
+                        'location' => $ext['location'],
+                        // Original path on the source forum, relative to
+                        // the Flarum base — the import side restores into
+                        // the same layout (vendor/ vs workbench/).
+                        'relative' => $ext['relative'],
+                    ],
+                ];
+            }
 
-                $beforeBytes = $totalBytes;
-                $beforeFiles = count($files);
-                $this->collectFiles($ext['path'], 'extensions/'.$ext['id'], $files, $totalBytes);
+            // composer.json + composer.lock travel alongside whenever the
+            // user is bundling extensions: vendor/ extensions are useless
+            // on the destination without the matching composer manifest
+            // (the next `composer install` would simply wipe them).
+            $targets[] = ['kind' => 'composer'];
+        }
 
-                $bundledExts[] = [
+        return [
+            'built'           => true,
+            'targets'         => $targets,
+            'idx'             => 0,
+            'files'           => 0,
+            'bytes'           => 0,
+            'counts'          => ['asset' => 0, 'storage' => 0, 'extension' => 0],
+            'ext_descriptors' => [],
+            'has_composer'    => false,
+        ];
+    }
+
+    /**
+     * Walk a single scan target, append its files to the NDJSON
+     * manifest, and roll the running counts/descriptors into $scan.
+     *
+     * @param array<string, mixed> $target
+     */
+    private function scanOneTarget(JobState $state, array &$scan, array $target): void
+    {
+        $manifestPath = $state->get('paths')['manifest'];
+        $files = [];
+        $bytes = 0;
+
+        switch ($target['kind']) {
+            case 'assets':
+                $this->collectFiles($target['base'], 'assets', $files, $bytes);
+                $scan['counts']['asset'] += count($files);
+                break;
+
+            case 'storage':
+                $this->collectFiles($target['base'], 'storage', $files, $bytes, $target['skip'] ?? []);
+                $scan['counts']['storage'] += count($files);
+                break;
+
+            case 'ext':
+                $ext = $target['ext'];
+                $this->collectFiles($target['base'], 'extensions/'.$ext['id'], $files, $bytes);
+                $scan['counts']['extension'] += count($files);
+                $scan['ext_descriptors'][] = [
                     'id'       => $ext['id'],
                     'name'     => $ext['name'],
                     'title'    => $ext['title'],
                     'version'  => $ext['version'],
                     'location' => $ext['location'],
-                    // Original path on the source forum, relative to the
-                    // Flarum base. The import side restores into the same
-                    // path on the destination — vendor extensions land
-                    // back in vendor/, workbench extensions in workbench/.
                     'relative' => $ext['relative'],
-                    'files'    => count($files) - $beforeFiles,
-                    'bytes'    => $totalBytes - $beforeBytes,
+                    'files'    => count($files),
+                    'bytes'    => $bytes,
                 ];
-            }
+                break;
+
+            case 'composer':
+                foreach (['composer.json', 'composer.lock'] as $rel) {
+                    $abs = rtrim($this->appPaths->base, '/\\').DIRECTORY_SEPARATOR.$rel;
+                    if (is_file($abs)) {
+                        $size = filesize($abs) ?: 0;
+                        $files[] = ['name' => 'project/'.$rel, 'absolute' => $abs, 'size' => $size];
+                        $bytes += $size;
+                        $scan['has_composer'] = true;
+                    }
+                }
+                break;
         }
+
+        $this->appendManifest($manifestPath, $files);
+        $scan['files'] += count($files);
+        $scan['bytes'] += $bytes;
+    }
+
+    /**
+     * Append file entries to the NDJSON manifest, one JSON object per
+     * line. Both a JSON-encode failure (e.g. a filename that is not
+     * valid UTF-8) and a write failure throw loudly — a silently dropped
+     * manifest would otherwise yield a "successful" backup missing every
+     * bundled file.
+     *
+     * @param list<array{name: string, absolute: string, size: int}> $files
+     */
+    private function appendManifest(string $path, array $files): void
+    {
+        if (empty($files)) return;
+
+        $lines = '';
+        foreach ($files as $f) {
+            $line = json_encode($f, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($line === false) {
+                throw new RuntimeException(
+                    'Could not encode manifest entry for "'.($f['name'] ?? '?').'": '.json_last_error_msg()
+                );
+            }
+            $lines .= $line."\n";
+        }
+
+        if (@file_put_contents($path, $lines, FILE_APPEND | LOCK_EX) === false) {
+            throw new RuntimeException('Could not write file manifest to staging dir.');
+        }
+    }
+
+    /**
+     * Every scan target walked — assemble the summary the import UI reads
+     * (per-section counts + per-extension descriptors), seed the DB table
+     * cursor, fold totals into progress, and advance to the next phase.
+     */
+    private function finalizeScan(JobState $state, array $scan): void
+    {
+        $contents    = $state->get('contents');
+        $bundledExts = $scan['ext_descriptors'];
 
         $state->set('bundled_extensions', $bundledExts);
-
-        // composer.json + composer.lock travel alongside whenever the
-        // user is bundling extensions: vendor/ extensions are useless
-        // on the destination without the matching composer manifest
-        // (the next `composer install` would simply wipe them). The
-        // import side restores both to the project root.
-        $hasComposer = false;
-        if ($extSelection !== false) {
-            foreach (['composer.json', 'composer.lock'] as $rel) {
-                $abs = rtrim($this->appPaths->base, '/\\').DIRECTORY_SEPARATOR.$rel;
-                if (is_file($abs)) {
-                    $size = filesize($abs) ?: 0;
-                    $files[] = ['name' => 'project/'.$rel, 'absolute' => $abs, 'size' => $size];
-                    $totalBytes += $size;
-                    $hasComposer = true;
-                }
-            }
-        }
-        $state->set('has_composer', $hasComposer);
+        $state->set('has_composer', (bool) $scan['has_composer']);
 
         $state->set('cursor', array_merge($state->get('cursor'), [
             'tables' => ! empty($contents['db']) ? $this->listTablesSafely() : [],
         ]));
 
-        // Persist the file manifest separately so we don't bloat the
-        // JSON state file with thousands of file paths.
-        @file_put_contents($state->get('paths')['manifest'], json_encode($files));
-
-        // Build a compact human-facing summary that travels in the
-        // archive header. The import UI uses this to render selection
-        // checkboxes ("restore which extensions?") without having to
-        // parse the entry stream up front.
+        // Compact summary that travels in the archive header so the
+        // import UI can render selection checkboxes without parsing the
+        // entry stream up front.
         $summary = [
-            'asset_count'     => 0,
-            'storage_count'   => 0,
-            'extension_count' => 0,
-            // Rich per-extension descriptors so the import side knows
-            // where each one originally lived (workbench / vendor) and
-            // can restore to the correct spot.
+            'asset_count'     => (int) $scan['counts']['asset'],
+            'storage_count'   => (int) $scan['counts']['storage'],
+            'extension_count' => (int) $scan['counts']['extension'],
             'extensions'      => $bundledExts,
-            // Surface to the UI that composer.json / composer.lock
-            // are inside the archive — the import flow shows a small
-            // note since restoring them overwrites the destination's
-            // composer manifest.
-            'has_composer'    => $hasComposer,
+            'has_composer'    => (bool) $scan['has_composer'],
         ];
-        foreach ($files as $f) {
-            $slash = strpos($f['name'], '/');
-            if ($slash === false) continue;
-            $root = substr($f['name'], 0, $slash);
-            if ($root === 'assets')        $summary['asset_count']++;
-            elseif ($root === 'storage')   $summary['storage_count']++;
-            elseif ($root === 'extensions') {
-                $summary['extension_count']++;
-            }
-        }
         $state->set('manifest_summary', $summary);
 
         $progress = $state->get('progress');
-        $progress['total_files']  = count($files);
-        $progress['total_bytes']  = $totalBytes;
+        $progress['total_files'] = (int) $scan['files'];
+        $progress['total_bytes'] = (int) $scan['bytes'];
         // We do not know SQL size up front; reflect it once dump finishes.
         $state->set('progress', $progress);
 
@@ -795,13 +914,26 @@ class ExportJob
         }
     }
 
-    /** @return list<array{name: string, absolute: string, size: int}> */
+    /**
+     * Read the NDJSON manifest written by the scan phase — one file
+     * descriptor per line. Lines that don't decode are skipped rather
+     * than aborting the whole bundle.
+     *
+     * @return list<array{name: string, absolute: string, size: int}>
+     */
     private function loadManifest(string $path): array
     {
         $raw = @file_get_contents($path);
-        if ($raw === false) return [];
-        $list = json_decode($raw, true);
-        return is_array($list) ? $list : [];
+        if ($raw === false || $raw === '') return [];
+
+        $out = [];
+        foreach (explode("\n", $raw) as $line) {
+            $line = trim($line);
+            if ($line === '') continue;
+            $row = json_decode($line, true);
+            if (is_array($row)) $out[] = $row;
+        }
+        return $out;
     }
 
     private function listTablesSafely(): array
