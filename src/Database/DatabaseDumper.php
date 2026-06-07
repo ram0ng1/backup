@@ -358,13 +358,6 @@ class DatabaseDumper
         return self::ROWS_PER_QUERY_BULK;
     }
 
-    private function buildOrderBy(Table $table): string
-    {
-        if (empty($table->primaryKey)) return '';
-        $cols = array_map(fn ($c) => $this->quoteIdentForRead($c), $table->primaryKey);
-        return ' ORDER BY ' . implode(', ', $cols);
-    }
-
     private function describe(string $table): Table
     {
         if (! isset($this->describedCache[$table])) {

@@ -112,6 +112,42 @@ class StoragePaths
         $this->rrmdir($real);
     }
 
+    /**
+     * Absolute paths of `export-*` / `import-*` staging dirs whose
+     * `job.json` (or the dir itself, if that file is gone) was last
+     * touched more than `$maxAgeSeconds` ago. Used by the scheduled
+     * pruner to reclaim space and clear any lingering plaintext
+     * `dump.sql` left behind by an errored or abandoned job — a tab
+     * closed mid-export, a job that hit the `error` phase, etc. An
+     * active job is safe: every tick re-saves `job.json`, so its mtime
+     * stays fresh and stays under any sane TTL.
+     *
+     * @return list<string>
+     */
+    public function staleJobDirs(int $maxAgeSeconds): array
+    {
+        $tmp = $this->tmpDir();
+        $cutoff = time() - max(0, $maxAgeSeconds);
+
+        $out = [];
+        foreach (scandir($tmp) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') continue;
+            if (! preg_match('/^(export|import)-[A-Za-z0-9_-]+$/', $entry)) continue;
+
+            $dir = $tmp . DIRECTORY_SEPARATOR . $entry;
+            if (! is_dir($dir)) continue;
+
+            $jobFile = $dir . DIRECTORY_SEPARATOR . 'job.json';
+            $mtime = is_file($jobFile) ? @filemtime($jobFile) : @filemtime($dir);
+            if ($mtime === false) continue;
+
+            if ($mtime < $cutoff) {
+                $out[] = $dir;
+            }
+        }
+        return $out;
+    }
+
     private function rrmdir(string $dir): void
     {
         if (! is_dir($dir)) {

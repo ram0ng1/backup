@@ -88,8 +88,11 @@ class UploadImportController implements RequestHandlerInterface
         $dir   = $this->paths->importJobDir($jobId);
 
         if (! is_writable($dir)) {
+            // Deliberately generic: don't echo the absolute staging path
+            // back to the client — it only aids filesystem-layout recon.
+            // The specific path is available server-side via logs.
             throw new ValidationException([
-                'archive' => 'Staging directory is not writable: '.$dir,
+                'archive' => 'Staging directory is not writable.',
             ]);
         }
 
