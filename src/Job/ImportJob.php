@@ -138,6 +138,11 @@ class ImportJob
                 'current_entry'     => null,
                 'current_offset'    => 0,
                 'extract_done'      => false,
+                // Persisted reader position (file offset + secretstream
+                // pull state) so each extract tick resumes in place
+                // instead of re-decrypting earlier entries. Null until
+                // the first extract tick records it.
+                'reader'            => null,
             ],
         ];
 
@@ -228,12 +233,14 @@ class ImportJob
      * dump.sql in the job dir; file entries are written straight to
      * their destination paths.
      *
-     * Resume strategy (deliberately simple): each tick reopens the
-     * archive from the beginning and seeks past entries that were
-     * already fully extracted. For encrypted archives this means
-     * re-decrypting earlier chunks too — slow on huge archives, but
-     * correct, predictable, and avoids needing to persist the
-     * secretstream pull state across ticks.
+     * Resume strategy: each tick stops on an entry boundary and persists
+     * the reader's exact position — file offset, the libsodium
+     * secretstream pull state, and any leftover decrypted bytes (see
+     * ArchiveReader::serializeState). The next tick reopens the archive
+     * and `resumeState()`s straight to that point, so earlier entries are
+     * read (and, for encrypted archives, DECRYPTED) exactly once across
+     * the whole import — not re-decrypted from byte 0 on every tick. That
+     * keeps a large encrypted restore linear instead of O(n²).
      */
     private function runExtract(JobState $state): void
     {
@@ -244,24 +251,21 @@ class ImportJob
 
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
-            if ($reader->isEncrypted()) {
+            // A persisted reader snapshot means this is a resume tick:
+            // jump straight to where we stopped. Its absence means this
+            // is the first extract tick, so prime decryption from the
+            // archive header instead.
+            $snap = $cursor['reader'] ?? null;
+            if ($snap !== null) {
+                $reader->resumeState([
+                    'fpos'             => $snap['fpos'] ?? null,
+                    'entry_stream_pos' => $snap['entry_stream_pos'] ?? 0,
+                    'stream_exhausted' => $snap['stream_exhausted'] ?? false,
+                    'stream_state'     => $state->getBinary('reader_stream_state'),
+                    'plain_buffer'     => $state->getBinary('reader_plain_buffer'),
+                ]);
+            } elseif ($reader->isEncrypted()) {
                 $reader->prepareEncrypted($this->cipher, $this->privateKey);
-            }
-
-            // Skip past entries we've already fully written.
-            $alreadyDone = (int) ($progress['extracted_entries'] ?? 0);
-            for ($i = 0; $i < $alreadyDone; $i++) {
-                $entry = $reader->nextEntry();
-                if ($entry === null) {
-                    $cursor['extract_done'] = true;
-                    break;
-                }
-                $remaining = $entry['length'];
-                while ($remaining > 0) {
-                    $want = (int) min(Format::CHUNK_SIZE, $remaining);
-                    $reader->readEntryBytes($want);
-                    $remaining -= $want;
-                }
             }
 
             $selection = $opts['selection'] ?? null;
@@ -324,6 +328,20 @@ class ImportJob
             } finally {
                 fclose($dumpFh);
             }
+
+            // Persist the reader's exact stop position (file offset +
+            // secretstream pull state + any leftover decrypted bytes) so
+            // the next tick resumes here. This is what keeps the whole
+            // extract O(n) instead of re-decrypting earlier entries on
+            // every tick.
+            $snap = $reader->serializeState();
+            $cursor['reader'] = [
+                'fpos'             => $snap['fpos'],
+                'entry_stream_pos' => $snap['entry_stream_pos'],
+                'stream_exhausted' => $snap['stream_exhausted'],
+            ];
+            $state->setBinary('reader_stream_state', (string) ($snap['stream_state'] ?? ''));
+            $state->setBinary('reader_plain_buffer', (string) $snap['plain_buffer']);
         } finally {
             $reader->close();
         }
