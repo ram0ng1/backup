@@ -197,6 +197,54 @@ class ArchiveReader
     }
 
     /**
+     * Snapshot enough state to resume the next tick exactly where this
+     * one stopped — without re-reading (and, for encrypted archives,
+     * re-decrypting) every earlier entry from the start. `stream_state`
+     * is null for plaintext archives.
+     *
+     * @return array{fpos: int, entry_stream_pos: int, stream_state: ?string, plain_buffer: string, stream_exhausted: bool}
+     */
+    public function serializeState(): array
+    {
+        return [
+            'fpos'             => (int) ftell($this->fh),
+            'entry_stream_pos' => $this->entryStreamPos,
+            'stream_state'     => $this->streamState,
+            'plain_buffer'     => $this->plainBuffer,
+            'stream_exhausted' => $this->streamExhausted,
+        ];
+    }
+
+    /**
+     * Resume a reader from a prior tick's `serializeState()` snapshot.
+     * Call this right after `openHeader()`, INSTEAD of
+     * `prepareEncrypted()`: the persisted secretstream state already
+     * encodes the unwrapped symmetric key, so the private key is not
+     * needed (and not consulted) on resume.
+     *
+     * @param array{fpos?: int|null, entry_stream_pos?: int, stream_state?: ?string, plain_buffer?: string, stream_exhausted?: bool} $state
+     */
+    public function resumeState(array $state): void
+    {
+        if ($this->encrypted) {
+            $ss = $state['stream_state'] ?? null;
+            if (! is_string($ss) || $ss === '') {
+                throw new RuntimeException('Encrypted archive resume is missing the secretstream state.');
+            }
+            $this->streamState     = $ss;
+            $this->plainBuffer     = (string) ($state['plain_buffer'] ?? '');
+            $this->streamExhausted = (bool) ($state['stream_exhausted'] ?? false);
+        }
+
+        $this->entryStreamPos = (int) ($state['entry_stream_pos'] ?? 0);
+
+        $fpos = (int) ($state['fpos'] ?? $this->bodyStart);
+        if (fseek($this->fh, $fpos) !== 0) {
+            throw new RuntimeException('Could not seek archive on resume.');
+        }
+    }
+
+    /**
      * Read $bytes of plaintext, pulling and decrypting more secretstream
      * chunks as needed.
      */
