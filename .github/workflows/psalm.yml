@@ -1,0 +1,90 @@
+name: Psalm Taint
+
+# Análise de taint (fluxo de dados origem→sink) para PHP — pega SQLi/XSS/
+# path-traversal que as regras de padrão do Semgrep não veem. O CodeQL não
+# cobre PHP; o Psalm taint é o equivalente.
+#
+# BLOQUEANTE desde o início: o baseline foi pré-verificado limpo localmente
+# (psalm 6.x, "No errors found"), então achado novo de taint reprova o PR.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 9 * * 1'  # toda segunda, 09:00 UTC
+  workflow_dispatch:
+
+# §35.13 C1 — default-deny.
+permissions: {}
+
+concurrency:
+  group: psalm-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  psalm:
+    name: Psalm taint analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF
+      actions: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            packagist.org:443
+            repo.packagist.org:443
+            getcomposer.org:443
+            pecl.php.net:443
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc  # v2
+        with:
+          php-version: '8.3'
+          extensions: dom, mbstring, fileinfo, bcmath, intl, simplexml, tokenizer, sodium, pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
+
+      # Bloqueante: o exit do psalm é propagado após garantir que o SARIF
+      # exista para upload.
+      - name: Psalm taint analysis
+        run: |
+          set +e
+          vendor/bin/psalm --taint-analysis --report=psalm-taint.sarif --no-progress
+          EXIT=$?
+          [ -f psalm-taint.sarif ] || echo '{"version":"2.1.0","runs":[]}' > psalm-taint.sarif
+          ls -l psalm-taint.sarif
+          exit $EXIT
+
+      - name: Upload SARIF — Psalm taint
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        with:
+          sarif_file: psalm-taint.sarif
+          category: psalm-taint
+
+      - name: Upload SARIF como artefato
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: psalm-taint-sarif
+          path: psalm-taint.sarif
+          retention-days: 30
+          if-no-files-found: warn
