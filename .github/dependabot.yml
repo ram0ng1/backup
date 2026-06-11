@@ -1,0 +1,32 @@
+# 🟡 R1 — Dependabot para composer, npm, e github-actions.
+# Os labels devem bater com `.github/pr-labeler.yml` para o changelog agrupar
+# corretamente (release-drafter).
+
+version: 2
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencias
+
+  - package-ecosystem: npm
+    directory: /js
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencias
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencias
