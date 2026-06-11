@@ -12,6 +12,11 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Aplicar label baseada na branch
         uses: TimonVS/pr-labeler-action@f9c084306ce8b3f488a8f3ee1ccedc6da131d1af # v5.0.0
         with:
