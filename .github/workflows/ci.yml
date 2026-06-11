@@ -301,3 +301,34 @@ jobs:
       - name: Build (webpack production)
         working-directory: js
         run: npm run build
+
+  # §35.13 R3 — nível 6 com baseline versionado (phpstan.neon +
+  # phpstan-baseline.neon). BLOQUEANTE: o baseline mantém verde e novos
+  # achados reprovam o PR (aperte o nível/baseline com o tempo).
+  phpstan:
+    name: PHPStan (nível 6, baseline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc  # v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          coverage: none
+          tools: composer:v2
+
+      - name: Instalar dependências
+        run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+
+      - name: PHPStan analyse
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G --error-format=github
