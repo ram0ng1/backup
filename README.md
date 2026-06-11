@@ -1,68 +1,35 @@
-# 📦 Backup &amp; Migration — Portable Backups for Flarum
+<p align="center">
+  <img src="icon.svg" width="80" height="80" alt="Backup &amp; Migration">
+</p>
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square) [![Latest Stable Version](https://img.shields.io/packagist/v/ramon/backup.svg?style=flat-square)](https://packagist.org/packages/ramon/backup) [![Total Downloads](https://img.shields.io/packagist/dt/ramon/backup.svg?style=flat-square)](https://packagist.org/packages/ramon/backup) [![GitHub Release](https://img.shields.io/github/v/release/ram0ng1/backup?style=flat-square&label=release&color=success)](https://github.com/ram0ng1/backup/releases/latest) [![Donate](https://img.shields.io/badge/donate-stripe-%236772E5?style=flat-square)](https://donate.stripe.com/fZe5o66nebkf39S28a)
+<h1 align="center">Backup &amp; Migration</h1>
 
-**A complete backup, export and import system for Flarum 2.x**
+<p align="center">
+  <a href="https://github.com/ram0ng1/backup/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/ram0ng1/backup/ci.yml?branch=main&style=flat-square&label=ci"></a>
+  <a href="https://packagist.org/packages/ramon/backup"><img alt="Packagist" src="https://img.shields.io/packagist/v/ramon/backup?style=flat-square&label=packagist"></a>
+  <a href="https://packagist.org/packages/ramon/backup"><img alt="Downloads" src="https://img.shields.io/packagist/dt/ramon/backup?style=flat-square"></a>
+  <img alt="Flarum" src="https://img.shields.io/badge/flarum-2.x-e7672e?style=flat-square">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+  <a href="https://donate.stripe.com/fZe5o66nebkf39S28a"><img alt="Donate" src="https://img.shields.io/badge/donate-stripe-6772E5?style=flat-square"></a>
+</p>
 
-### About the Project
+<p align="center">Full backups and one click migration for Flarum 2.</p>
 
-**Backup &amp; Migration** is a full-featured backup and migration extension I've been
-building for Flarum, inspired by *All-in-One WP Migration* but written from
-scratch with a Flarum-native format. It bundles your forum into a single
-portable `.flarum` file — database, uploads, storage, and any installed
-extensions (workbench *or* vendor) — and restores it on the same install or a
-different one with one click.
+Backup &amp; Migration packs your whole forum into a single portable `.flarum` file: database, uploads, storage and extensions. Restore it on the same install or on a brand new server and keep going.
 
-It started from my own need to migrate forums between hosts without the manual
-mysqldump-and-zip dance, and grew into a complete suite covering encryption,
-cross-server transfer, per-extension picking, and automatic URL rewriting.
+I wrote it after one too many rounds of the mysqldump and zip dance while moving forums between hosts. It ended up becoming something close to what All-in-One WP Migration is for WordPress, just built natively for Flarum.
 
----
+## What it does
 
-### ✨ Highlights
+- Exports everything into one streaming `.flarum` file, so multi GB forums never need to fit in memory
+- Lets you pick what goes in: database, assets, storage and individual extensions
+- Restores with per section and per extension checkboxes, resumable in chunks
+- Migrates between database engines: export from MySQL, restore on PostgreSQL, MariaDB or SQLite
+- Rewrites the forum URL automatically when restoring on a different host
+- Encrypts archives with libsodium when you ask it to, including transfers to another server's public key
+- Ships `composer.json` and `composer.lock` inside the archive, so vendor extensions stay reproducible
 
-- **Single portable `.flarum` file** — custom streaming format (not `.wpress`,
-  not zip), forward-only so multi-GB backups never need to fit in memory
-- **Pick what to bundle** — database, `public/assets`, `storage`, and individual
-  extensions, with a tag on each row showing whether it lives in `workbench/`
-  or in `vendor/` (composer-managed)
-- **`composer.json` + `composer.lock` travel along** — vendor extensions stay
-  reproducible on the destination
-- **Resumable, chunked progress** on both export and import (~4 MB per HTTP
-  request), with live progress bars and an upload `%` indicator
-- **Command-line export & import** — run a full backup or restore from
-  `php flarum backup:export` / `backup:import`, with no `max_execution_time`
-  or `memory_limit` worries and no browser tab to keep open; ideal for large
-  forums, cron jobs and scripted server-to-server transfer
-- **Optional asymmetric encryption** — libsodium hybrid scheme: sealed-box
-  wraps a per-archive XChaCha20-Poly1305 stream key. Public key in the database,
-  private key only in `config.php`
-- **Cross-server transfer** — encrypt to a foreign public key, paste the
-  matching private key at import time
-- **Automatic URL rewriting** — the source URL is recorded in the archive
-  header and rewritten across `settings`, `posts.content` and
-  `posts.parsed_content` when restoring on a different host
-- **Selectable restore** — per-section and per-extension checkboxes populated
-  from the archive's manifest
-- **Foreign-key-safe restore** — disables FK checks per tick so DDL referencing
-  not-yet-created tables succeeds without ordering dance
-- **Smart pruning** while scanning (`node_modules`, `.git`, `.idea`, nested
-  `vendor/`…) so workbench scans stay seconds-fast
-- **Dedicated "you've been logged out" screen** when a DB restore replaces the
-  admin's session
-
----
-
-### 🛠️ Technologies
-
-- **PHP 8.1+** — resumable export / import jobs, libsodium crypto, MySQL dumper
-- **TypeScript + Mithril** — admin panel UI
-- **LESS** — styling (theme-aware via Flarum's CSS variables)
-- **libsodium** — sealed-box + secretstream chunked encryption
-
----
-
-### Installation
+## Installation
 
 ```sh
 composer require ramon/backup
@@ -70,92 +37,24 @@ php flarum migrate
 php flarum cache:clear
 ```
 
-Then enable **Backup &amp; Migration** under the *Extensions* page in the admin
-panel.
+Then enable Backup &amp; Migration on the Extensions page of the admin panel.
 
----
+## Command line
 
-### 🖥️ Command-line interface (CLI)
-
-Export and import are also available as console commands. A CLI run has no HTTP
-request timeout, no `memory_limit` pressure from a web worker, and doesn't
-depend on keeping a browser tab open — so the CLI is the most reliable way to
-back up or migrate **large** forums, and the natural fit for cron jobs and
-scripted server-to-server transfer. Under the hood it drives the exact same
-engine as the admin panel, simply looped to completion in a single process.
-
-#### Export — `backup:export`
+The same engine runs as console commands, with no HTTP timeout and no browser tab to babysit. Best route for large forums and cron jobs.
 
 ```sh
-# Database only, same engine as the source
-php flarum backup:export --db
-
-# Full backup: database + assets + storage + every extension
-php flarum backup:export --all
-
-# Database, retargeted to a different engine (cross-engine migration)
-php flarum backup:export --db --target=postgres
-
-# Pick specific extensions and also copy the finished archive elsewhere
-php flarum backup:export --db --extensions=ramon/verified,fof/byobu -o /backups/forum.flarum
-
-# Encrypt to a public key (e.g. preparing a transfer to another server)
-php flarum backup:export --all --encrypt --public-key="BASE64_PUBLIC_KEY"
-```
-
-Options: `--db/--no-db` (default on), `--assets`, `--storage`,
-`--extensions[=LIST]` (omit the value for **all** installed extensions),
-`--all`, `--target=mysql|mariadb|postgres|sqlite` (defaults to the source
-engine), `--encrypt`, `--public-key=…`, `-o, --output=PATH`.
-
-#### Import — `backup:import`
-
-```sh
-# Restore everything in an archive (replaces current data)
+php flarum backup:export --all                      # everything
+php flarum backup:export --db --target=postgres     # database only, retargeted to another engine
 php flarum backup:import /backups/forum.flarum --yes
-
-# Restore only the database
-php flarum backup:import /backups/forum.flarum --yes --db --no-assets --no-storage
-
-# Decrypt an encrypted archive with the matching private key
-php flarum backup:import /backups/forum.flarum --yes --private-key="BASE64_PRIVATE_KEY"
 ```
 
-> ⚠️ A restore **replaces** the destination database and files, so
-> `backup:import` refuses to run without the explicit `--yes` flag.
+A restore replaces the destination data, so `backup:import` refuses to run without `--yes`. Use `--help` on either command for the full list of flags.
 
-Options: `-y, --yes` (**required**), `--private-key=…`, `--db/--no-db`,
-`--assets/--no-assets`, `--storage/--no-storage`, `--extensions[=LIST]`. With no
-selection flags, the entire archive is restored.
+## About encryption
 
-A typical server-to-server migration:
+Encrypted archives use a libsodium sealed box wrapping a per archive stream key. The public key lives in the database, the private key only in `config.php`. Keep that private key safe: without it an encrypted archive cannot be opened.
 
-```sh
-# On the OLD server
-php flarum backup:export --all --target=postgres -o /tmp/forum.flarum
+## License
 
-# copy /tmp/forum.flarum to the NEW server, then there:
-php flarum backup:import /tmp/forum.flarum --yes
-```
-
----
-
-### Links
-
-- **GitHub:** [github.com/ram0ng1/backup](https://github.com/ram0ng1/backup)
-- **Packagist:** [packagist.org/packages/ramon/backup](https://packagist.org/packages/ramon/backup)
-- **Issues:** [github.com/ram0ng1/backup/issues](https://github.com/ram0ng1/backup/issues)
-- **Donate:** [Stripe](https://donate.stripe.com/fZe5o66nebkf39S28a)
-
----
-
-### License
-
-[MIT](LICENSE)
-
----
-
-**Built with ❤️ by [Ramon Guilherme](https://ramonguilherme.com.br)**
-
-*A personal project focused on making it easier to back up, move and restore
-Flarum communities — without leaving the admin panel.*
+[MIT](LICENSE). Found a bug or have an idea? [Open an issue](https://github.com/ram0ng1/backup/issues).
