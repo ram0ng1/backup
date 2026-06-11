@@ -1,0 +1,241 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 1
+			path: src/Api/Controller/DownloadBackupController.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Support\\Optional\:\:toIso8601String\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Api/Controller/ListBackupsController.php
+
+		-
+			message: '#^Parameter \#1 \$callback of method Illuminate\\Support\\Collection\<int,stdClass\>\:\:map\(\) contains unresolvable type\.$#'
+			identifier: argument.unresolvableType
+			count: 1
+			path: src/Api/Controller/ListBackupsController.php
+
+		-
+			message: '#^Parameter \#1 \$callback of method Illuminate\\Support\\Collection\<int,stdClass\>\:\:map\(\) expects callable\(stdClass, int\)\: array\{id\: int, filename\: string, size_bytes\: int, encrypted\: bool, contents\: list\<string\>, flarum_version\: string\|null, php_version\: string\|null, target_dialect\: string\|null, created_at\: mixed, created_by\: int\<min, \-1\>\|int\<1, max\>\|null\}, Closure\(Ramon\\Backup\\Models\\Backup\)\: array\{id\: int, filename\: string, size_bytes\: int, encrypted\: bool, contents\: list\<string\>, flarum_version\: string\|null, php_version\: string\|null, target_dialect\: string\|null, created_at\: mixed, created_by\: int\<min, \-1\>\|int\<1, max\>\|null\} given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Api/Controller/ListBackupsController.php
+
+		-
+			message: '#^Return type of call to method Illuminate\\Support\\Collection\<int,array\<string, mixed\>\>\:\:all\(\) contains unresolvable type\.$#'
+			identifier: method.unresolvableReturnType
+			count: 1
+			path: src/Api/Controller/ListBackupsController.php
+
+		-
+			message: '#^Return type of call to method Illuminate\\Support\\Collection\<int,stdClass\>\:\:map\(\) contains unresolvable type\.$#'
+			identifier: method.unresolvableReturnType
+			count: 1
+			path: src/Api/Controller/ListBackupsController.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveReader\:\:__construct\(\) has parameter \$fh with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: src/Archive/ArchiveReader.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveReader\:\:__construct\(\) has parameter \$meta with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Archive/ArchiveReader.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveReader\:\:meta\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Archive/ArchiveReader.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:__construct\(\) has parameter \$fh with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:createEncrypted\(\) has parameter \$meta with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:createPlain\(\) has parameter \$meta with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:openForAppend\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:openForCreate\(\) has no return type specified\.$#'
+			identifier: missingType.return
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:writeEntryFromStream\(\) has parameter \$source with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:writeFileHeader\(\) has parameter \$fh with no type specified\.$#'
+			identifier: missingType.parameter
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Archive\\ArchiveWriter\:\:writeFileHeader\(\) has parameter \$meta with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Archive/ArchiveWriter.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Console\\ExportCommand\:\:resolveExtensionSelection\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Console/ExportCommand.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Console\\ImportCommand\:\:resolveExtensionSelection\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Console/ImportCommand.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Console\\ImportCommand\:\:resolveSelection\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Console/ImportCommand.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Crypto\\BackupCipher\:\:status\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Crypto/BackupCipher.php
+
+		-
+			message: '#^Property Ramon\\Backup\\Database\\DatabaseDumper\:\:\$describedCache type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Database/DatabaseDumper.php
+
+		-
+			message: '#^Call to an undefined static method Ramon\\Backup\\Models\\Backup\:\:create\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:buildMeta\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:collectFiles\(\) has parameter \$skipDirs with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:finalizeScan\(\) has parameter \$scan with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:listTablesSafely\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:normaliseExtensionSelection\(\) return type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:openWriter\(\) has parameter \$enc with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ExportJob\:\:scanOneTarget\(\) has parameter \$scan with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Parameter &\$files by\-ref type of method Ramon\\Backup\\Job\\ExportJob\:\:collectFiles\(\) expects array\<string, array\{name\: string, absolute\: string, size\: int\}\>, non\-empty\-array\<int\|string, array\{name\: string, absolute\: string, size\: int\}\> given\.$#'
+			identifier: parameterByRef.type
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Property Ramon\\Backup\\Job\\ExportJob\:\:\$db \(Illuminate\\Database\\Connection\) does not accept Illuminate\\Database\\ConnectionInterface\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: src/Job/ExportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ImportJob\:\:hasAnyExtensionSelected\(\) has parameter \$selection with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ImportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\ImportJob\:\:shouldExtract\(\) has parameter \$selection with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/ImportJob.php
+
+		-
+			message: '#^Property Ramon\\Backup\\Job\\ImportJob\:\:\$db \(Illuminate\\Database\\Connection\) does not accept Illuminate\\Database\\ConnectionInterface\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: src/Job/ImportJob.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between non\-empty\-string and false will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 2
+			path: src/Job/ImportJob.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\JobState\:\:__construct\(\) has parameter \$data with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/JobState.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Job\\JobState\:\:create\(\) has parameter \$initial with no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Job/JobState.php
+
+		-
+			message: '#^Method Ramon\\Backup\\Models\\Backup\:\:creator\(\) return type with generic class Illuminate\\Database\\Eloquent\\Relations\\BelongsTo does not specify its types\: TRelatedModel, TDeclaringModel$#'
+			identifier: missingType.generics
+			count: 1
+			path: src/Models/Backup.php
+
+		-
+			message: '#^Property Ramon\\Backup\\Models\\Backup\:\:\$casts type has no value type specified in iterable type array\.$#'
+			identifier: missingType.iterableValue
+			count: 1
+			path: src/Models/Backup.php
