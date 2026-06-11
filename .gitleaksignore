@@ -1,0 +1,5 @@
+# Falso-positivo histórico: chave X25519 de EXEMPLO num trecho de
+# documentação do README (commit e03a801e, já removida do tree atual).
+# Se essa chave algum dia foi usada num servidor real, ela deve ser
+# ROTACIONADA — o ignore aqui só silencia o exemplo de docs no histórico.
+e03a801e2d29581a5cf8055b4eec8371b1b2caaa:README.md:generic-api-key:80
