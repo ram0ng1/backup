@@ -24,6 +24,12 @@ jobs:
     name: Publicar no Fórum
     runs-on: ubuntu-latest
     steps:
+      # §35.13 I3 — este job toca em FLARUM_API_KEY; auditar o egress importa.
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Validar FLARUM_DISCUSSION_ID
         env:
           FLARUM_DISCUSSION_ID: ${{ vars.FLARUM_DISCUSSION_ID }}
