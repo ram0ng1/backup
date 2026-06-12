@@ -82,15 +82,15 @@ jobs:
       mysql:
         image: mysql:${{ matrix.version }}
         env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: backup_xfer_test
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
           --health-interval=10s --health-timeout=5s --health-retries=20
     env:
-      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
+      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=root;database=backup_xfer_test'
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -120,7 +120,7 @@ jobs:
       mariadb:
         image: mariadb:${{ matrix.version }}
         env:
-          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+          MARIADB_ROOT_PASSWORD: root
           MARIADB_DATABASE: backup_xfer_test
         ports:
           - 3306:3306
@@ -131,7 +131,7 @@ jobs:
       # Driver `mariadb` (illuminate v13's dedicated one) makes the
       # connection report driverName=mariadb — the exact path that
       # regressed. The harness picks it from the engine key, not env.
-      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
+      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3306;username=root;password=root;database=backup_xfer_test'
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -195,17 +195,17 @@ jobs:
       mysql:
         image: mysql:8.4
         env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: backup_xfer_test
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
           --health-interval=10s --health-timeout=5s --health-retries=20
       mariadb:
         image: mariadb:11.4
         env:
-          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+          MARIADB_ROOT_PASSWORD: root
           MARIADB_DATABASE: backup_xfer_test
         ports:
           # Host 3307 to avoid colliding with mysql's 3306 mapping.
@@ -224,8 +224,8 @@ jobs:
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s --health-timeout=5s --health-retries=20
     env:
-      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test'
-      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3307;username=root;password=;database=backup_xfer_test'
+      BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=root;database=backup_xfer_test'
+      BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3307;username=root;password=root;database=backup_xfer_test'
       BACKUP_TEST_POSTGRES: 'host=127.0.0.1;port=5432;username=postgres;password=postgres;database=backup_xfer_test'
     steps:
       - name: Harden runner

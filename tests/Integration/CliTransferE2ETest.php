@@ -5,7 +5,7 @@ namespace Ramon\Backup\Tests\Integration;
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
 use Illuminate\Container\Container;
-use Illuminate\Database\Capsule\Manager as Capsule;
+use Illuminate\Database\Capsule\Manager as Capsule; /* harness de teste standalone, sem boot do Flarum; nosemgrep: flarum-v2-capsule-manager */
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Mockery;
@@ -230,7 +230,7 @@ final class CliTransferE2ETest extends TestCase
         $this->assertFileExists($jobStateFile);
         $this->assertStringNotContainsString(
             $privateKey,
-            (string) file_get_contents($jobStateFile),
+            (string) file_get_contents($jobStateFile), /* arquivo local do próprio teste; nosemgrep: flarum-v2-server-side-fetch */
             'Private key was persisted into job.json by start()'
         );
 
@@ -239,7 +239,7 @@ final class CliTransferE2ETest extends TestCase
             if (is_file($jobStateFile)) {
                 $this->assertStringNotContainsString(
                     $privateKey,
-                    (string) file_get_contents($jobStateFile),
+                    (string) file_get_contents($jobStateFile), /* arquivo local do próprio teste; nosemgrep: flarum-v2-server-side-fetch */
                     'Private key leaked into job.json during a tick'
                 );
             }
