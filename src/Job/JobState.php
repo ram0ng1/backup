@@ -44,7 +44,7 @@ class JobState
         if (! is_file($file)) {
             throw new RuntimeException('Job state file not found: '.$file);
         }
-        $raw = @file_get_contents($file);
+        $raw = @file_get_contents($file); /* leitura de arquivo local, sem URL de input; nosemgrep: flarum-v2-server-side-fetch */
         if ($raw === false) {
             throw new RuntimeException('Could not read job state.');
         }

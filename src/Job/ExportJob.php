@@ -923,7 +923,7 @@ class ExportJob
      */
     private function loadManifest(string $path): array
     {
-        $raw = @file_get_contents($path);
+        $raw = @file_get_contents($path); /* leitura de arquivo local, sem URL de input; nosemgrep: flarum-v2-server-side-fetch */
         if ($raw === false || $raw === '') return [];
 
         $out = [];
@@ -1009,7 +1009,7 @@ class ExportJob
     {
         $composer = $this->appPaths->base.DIRECTORY_SEPARATOR.'composer.lock';
         if (is_file($composer)) {
-            $data = json_decode((string) file_get_contents($composer), true);
+            $data = json_decode((string) file_get_contents($composer), true); /* leitura de arquivo local, sem URL de input; nosemgrep: flarum-v2-server-side-fetch */
             if (is_array($data) && isset($data['packages'])) {
                 foreach ($data['packages'] as $pkg) {
                     if (($pkg['name'] ?? '') === 'flarum/core') {

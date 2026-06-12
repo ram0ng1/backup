@@ -771,7 +771,7 @@ class ImportJob
     private function resolveDestination(string $name, JobState $state): ?string
     {
         $name = ltrim($name, '/');
-        if (str_contains($name, '..') || str_contains($name, "\0") || str_contains($name, '\\')) {
+        if (str_contains($name, '..') || str_contains($name, "\0") || str_contains($name, '\\')) { /* rejeita (não remove) e o destino ainda passa pela contenção com realpath abaixo; nosemgrep: flarum-v2-path-traversal-naive-filter */
             return null;
         }
 
