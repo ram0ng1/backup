@@ -88,7 +88,7 @@ class InspectImportController implements RequestHandlerInterface
     {
         $path = $dir.DIRECTORY_SEPARATOR.'upload.meta.json';
         if (! is_file($path)) return [];
-        $raw = @file_get_contents($path);
+        $raw = @file_get_contents($path); /* leitura de arquivo local, sem URL de input; nosemgrep: flarum-v2-server-side-fetch */
         if ($raw === false) return [];
         $data = json_decode($raw, true);
         return is_array($data) ? $data : [];
