@@ -7,9 +7,9 @@
   "devDependencies": {
     "flarum-tsconfig": "^2.0.0",
     "flarum-webpack-config": "^3.0.0",
-    "prettier": "^2.8.0",
+    "prettier": "^3.8.4",
     "typescript": "^6.0.3",
-    "webpack": "^5.104.0",
+    "webpack": "^5.107.2",
     "webpack-cli": "^7.0.3"
   },
   "scripts": {
