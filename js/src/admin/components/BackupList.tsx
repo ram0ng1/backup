@@ -78,7 +78,7 @@ export default class BackupList extends Component<BackupListAttrs> {
                       trans("target_tooltip", {
                         engine:
                           DIALECT_LABEL[b.target_dialect] || b.target_dialect,
-                      })
+                      }),
                     )}
                   >
                     <i className="icon fas fa-arrow-right-arrow-left" />{" "}

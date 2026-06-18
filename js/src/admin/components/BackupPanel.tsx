@@ -148,7 +148,7 @@ export default class BackupPanel extends Component<ComponentAttrs> {
     } catch (e) {
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("list.delete_failed")))
+        errorDetail(e, String(trans("list.delete_failed"))),
       );
     }
   }
