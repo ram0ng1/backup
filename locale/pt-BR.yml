@@ -134,7 +134,7 @@ ramon-backup:
       phase_done: "Pronto"
       phase_error: "Erro"
       phase_error_network: "Conexão com o servidor foi perdida durante o backup. O job pode ainda estar rodando no servidor — verifique a lista de backups em instantes."
-      warnings_title: "{count} aviso de tradução|{count} avisos de tradução"
+      warnings_title: "{count, plural, one {# aviso de tradução} other {# avisos de tradução}}"
       warnings_help: "Algumas colunas usam tipos que não têm equivalente direto no engine de destino escolhido. O backup é concluído normalmente — mas a coluna no destino pode não validar ou se comportar de forma idêntica. Revise cada item abaixo antes de usar este backup para uma migração."
 
     import_modal:
