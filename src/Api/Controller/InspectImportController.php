@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Archive\ArchiveReader;
+use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -75,11 +76,24 @@ class InspectImportController implements RequestHandlerInterface
             ]);
         }
 
+        // Stack gate at inspect time — the operator learns the restore
+        // is impossible BEFORE ticking "confirm replace", instead of
+        // after committing. ImportJob re-checks it as the authoritative
+        // backstop for the CLI and for direct API callers that skip
+        // inspect. The staged upload is left in place so a retry after
+        // a PHP upgrade doesn't need a re-upload; PruneStaleJobsCommand
+        // sweeps it if the operator walks away.
+        $blocking = StackSnapshot::blockingReason($archiveMeta);
+        if ($blocking !== null) {
+            throw new ValidationException(['archive' => $blocking]);
+        }
+
         return new JsonResponse([
             'job_id'       => $jobId,
             'is_encrypted' => $isEncrypted,
             'meta'         => $archiveMeta,
             'size'         => $actual,
+            'advisories'   => StackSnapshot::advisories($archiveMeta),
         ]);
     }
 

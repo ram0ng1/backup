@@ -11,6 +11,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Database\Dialect;
+use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
@@ -958,10 +959,14 @@ class ExportJob
         } catch (Throwable) { /* leave blank if unknown */ }
 
         return [
-            'format_version' => 2, // 2 = adds source/target dialect tags
+            'format_version' => 3, // 2 = source/target dialect tags; 3 = stack snapshot
             'created_at'     => gmdate('c'),
             'flarum_version' => $this->detectFlarumVersion(),
             'php_version'    => PHP_VERSION,
+            // Retrato da stack desta origem. O import compara com a
+            // dele e recusa restaurar uma stack mais nova sobre uma
+            // mais antiga — ver StackSnapshot::blockingReason().
+            StackSnapshot::META_KEY => StackSnapshot::capture(),
             'contents'       => array_keys(array_filter($contents)),
             'source_dialect' => $sourceDialect,
             // The target the SQL was generated for. Equal to source on

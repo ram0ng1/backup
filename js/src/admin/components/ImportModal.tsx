@@ -75,9 +75,16 @@ interface ImportProgress {
     total_bytes: number;
     processed_bytes: number;
     extracted_entries: number;
+    skipped_entries?: number;
+    unresolved_entries?: number;
     restored_statements: number;
     percent: number;
   };
+  // A restore that lost entries still ends in `done`. These two are
+  // what stop the completed screen from painting clean success over
+  // an incomplete restore.
+  warnings?: string[];
+  incomplete?: boolean;
 }
 
 const trans = (key: string, params?: Record<string, unknown>) =>
@@ -277,7 +284,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
    */
   private async uploadWithProgress(
     file: File,
-    onProgress: (pct: number) => void,
+    onProgress: (pct: number) => void
   ): Promise<InspectResult> {
     // ─── 1. init ──────────────────────────────────────────────────
     const init = await apiRequest<{ job_id: string; chunk_size: number }>({
@@ -487,7 +494,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const extList: ArchiveExtensionEntry[] = (
       rawExtList as Array<string | ArchiveExtensionEntry>
     ).map((e) =>
-      typeof e === "string" ? { id: e, location: "workbench" as const } : e,
+      typeof e === "string" ? { id: e, location: "workbench" as const } : e
     );
 
     return (
@@ -502,14 +509,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             "assets",
             this.sectionAssets,
             (v) => (this.sectionAssets = v),
-            manifest.asset_count,
+            manifest.asset_count
           )}
         {hasStorage &&
           this.sectionRow(
             "storage",
             this.sectionStorage,
             (v) => (this.sectionStorage = v),
-            manifest.storage_count,
+            manifest.storage_count
           )}
         {hasExtensions && (
           <>
@@ -522,7 +529,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
                 // child to match. The user can then untick individuals.
                 for (const ext of extList) this.extensionsByName[ext.id] = v;
               },
-              manifest.extension_count,
+              manifest.extension_count
             )}
 
             {this.sectionExtensions && manifest.has_composer && (
@@ -572,7 +579,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     key: "db" | "assets" | "storage" | "extensions",
     checked: boolean,
     set: (v: boolean) => void,
-    count?: number,
+    count?: number
   ) {
     return (
       <label className="BackupImport-sectionRow">
@@ -604,8 +611,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const extensionsField: boolean | string[] = !this.sectionExtensions
       ? false
       : allChecked
-        ? true
-        : extEntries.filter(([, v]) => v).map(([k]) => k);
+      ? true
+      : extEntries.filter(([, v]) => v).map(([k]) => k);
 
     return {
       db: this.sectionDb,
@@ -647,7 +654,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     } catch (e) {
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("start_failed"))),
+        errorDetail(e, String(trans("start_failed")))
       );
     } finally {
       this.starting = false;
@@ -716,10 +723,33 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
    *
    *   - Files only — the session is fine, just close.
    */
+  /**
+   * Warning block for a restore that finished but lost entries, or that
+   * carries a stack advisory. Rendered on the completed screen in both
+   * shapes — an incomplete restore must never present as clean success,
+   * which is the failure mode this whole path exists to remove.
+   */
+  completedWarnings() {
+    const warnings = this.status?.warnings ?? [];
+    if (!warnings.length) return null;
+
+    return (
+      <div className="Alert Alert--error BackupImport-completedWarnings">
+        <strong>{trans("incomplete_title")}</strong>
+        <ul>
+          {warnings.map((w) => (
+            <li>{w}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   completedContent() {
     if (this.sectionDb) {
       return (
         <div className="Modal-body BackupImport-completed BackupImport-completed--logout">
+          {this.completedWarnings()}
           <div className="BackupImport-completedIcon">
             <i className="fas fa-right-from-bracket" />
           </div>
@@ -744,13 +774,28 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       );
     }
 
+    const incomplete = !!this.status?.incomplete;
+
     return (
       <div className="Modal-body BackupImport-completed">
-        <div className="BackupImport-completedIcon BackupImport-completedIcon--success">
-          <i className="fas fa-circle-check" />
+        {this.completedWarnings()}
+        <div
+          className={`BackupImport-completedIcon BackupImport-completedIcon--${
+            incomplete ? "warning" : "success"
+          }`}
+        >
+          <i
+            className={
+              incomplete ? "fas fa-triangle-exclamation" : "fas fa-circle-check"
+            }
+          />
         </div>
-        <h3 className="BackupImport-completedTitle">{trans("done_title")}</h3>
-        <p className="BackupImport-completedBody">{trans("done_body")}</p>
+        <h3 className="BackupImport-completedTitle">
+          {trans(incomplete ? "incomplete_title" : "done_title")}
+        </h3>
+        <p className="BackupImport-completedBody">
+          {trans(incomplete ? "incomplete_body" : "done_body")}
+        </p>
         <Button className="Button Button--primary" onclick={() => this.close()}>
           {trans("close_button")}
         </Button>

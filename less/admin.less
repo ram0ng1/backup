@@ -497,6 +497,21 @@
   background: rgba(46, 204, 113, 0.14);
   color: #2ecc71;
 }
+// Restauração que terminou sem gravar tudo. Repete o âmbar do estado
+// base de propósito: um restore incompleto NUNCA pode herdar o verde.
+.BackupImport-completedIcon--warning {
+  background: rgba(231, 159, 23, 0.12);
+  color: #e79f17;
+}
+.BackupImport-completedWarnings {
+  text-align: left;
+  width: 100%;
+
+  ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+}
 .BackupImport-completedTitle {
   margin: 0;
   font-size: 18px;

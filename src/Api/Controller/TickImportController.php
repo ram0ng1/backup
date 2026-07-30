@@ -56,6 +56,11 @@ class TickImportController implements RequestHandlerInterface
             'phase'    => $state->get('phase'),
             'message'  => $state->get('message'),
             'progress' => $state->get('progress'),
+            // Restauração que perdeu entradas termina em `done`, então o
+            // frontend precisa destes dois para não pintar a tela de
+            // sucesso limpo por cima de um restore incompleto.
+            'warnings'   => $state->get('warnings', []),
+            'incomplete' => (bool) $state->get('incomplete', false),
         ]);
     }
 }
