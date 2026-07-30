@@ -284,7 +284,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
    */
   private async uploadWithProgress(
     file: File,
-    onProgress: (pct: number) => void
+    onProgress: (pct: number) => void,
   ): Promise<InspectResult> {
     // ─── 1. init ──────────────────────────────────────────────────
     const init = await apiRequest<{ job_id: string; chunk_size: number }>({
@@ -494,7 +494,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const extList: ArchiveExtensionEntry[] = (
       rawExtList as Array<string | ArchiveExtensionEntry>
     ).map((e) =>
-      typeof e === "string" ? { id: e, location: "workbench" as const } : e
+      typeof e === "string" ? { id: e, location: "workbench" as const } : e,
     );
 
     return (
@@ -509,14 +509,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             "assets",
             this.sectionAssets,
             (v) => (this.sectionAssets = v),
-            manifest.asset_count
+            manifest.asset_count,
           )}
         {hasStorage &&
           this.sectionRow(
             "storage",
             this.sectionStorage,
             (v) => (this.sectionStorage = v),
-            manifest.storage_count
+            manifest.storage_count,
           )}
         {hasExtensions && (
           <>
@@ -529,7 +529,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
                 // child to match. The user can then untick individuals.
                 for (const ext of extList) this.extensionsByName[ext.id] = v;
               },
-              manifest.extension_count
+              manifest.extension_count,
             )}
 
             {this.sectionExtensions && manifest.has_composer && (
@@ -579,7 +579,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     key: "db" | "assets" | "storage" | "extensions",
     checked: boolean,
     set: (v: boolean) => void,
-    count?: number
+    count?: number,
   ) {
     return (
       <label className="BackupImport-sectionRow">
@@ -611,8 +611,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const extensionsField: boolean | string[] = !this.sectionExtensions
       ? false
       : allChecked
-      ? true
-      : extEntries.filter(([, v]) => v).map(([k]) => k);
+        ? true
+        : extEntries.filter(([, v]) => v).map(([k]) => k);
 
     return {
       db: this.sectionDb,
@@ -654,7 +654,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     } catch (e) {
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("start_failed")))
+        errorDetail(e, String(trans("start_failed"))),
       );
     } finally {
       this.starting = false;

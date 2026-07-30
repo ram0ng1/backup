@@ -383,7 +383,7 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
     } catch (e) {
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("actions.generate_failed")))
+        errorDetail(e, String(trans("actions.generate_failed"))),
       );
       throw e;
     }

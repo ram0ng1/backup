@@ -14,7 +14,7 @@ override(
   function (this: any, original: () => unknown) {
     if (this.extension && this.extension.id === EXT_ID) return null;
     return original();
-  }
+  },
 );
 
 app.initializers.add(EXT_ID, () => {
@@ -25,10 +25,10 @@ app.initializers.add(EXT_ID, () => {
       {
         icon: "fas fa-file-archive",
         label: app.translator.trans(
-          "ramon-backup.admin.permissions.manage_label"
+          "ramon-backup.admin.permissions.manage_label",
         ),
         permission: "backup.manage",
       },
-      "moderate"
+      "moderate",
     );
 });
