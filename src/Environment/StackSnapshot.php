@@ -38,6 +38,10 @@ class StackSnapshot
     ];
 
     /**
+     * Retrato desta origem. A lista de extensões sai ordenada e
+     * contígua pelo próprio `sort()`, que reindexa — envolver em
+     * `array_values()` seria chamada sem efeito.
+     *
      * @return array{php_version: string, php_minor: string, php_extensions: list<string>}
      */
     public static function capture(): array
@@ -48,7 +52,7 @@ class StackSnapshot
         return [
             'php_version'    => PHP_VERSION,
             'php_minor'      => self::minor(PHP_VERSION),
-            'php_extensions' => array_values($loaded),
+            'php_extensions' => $loaded,
         ];
     }
 
