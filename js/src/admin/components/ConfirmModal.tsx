@@ -86,7 +86,7 @@ export function confirmAsync(
   attrs: Omit<
     ConfirmModalAttrs,
     "onConfirm" | "onCancel" | keyof IInternalModalAttrs
-  >,
+  >
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;

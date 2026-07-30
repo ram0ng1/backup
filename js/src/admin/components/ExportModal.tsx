@@ -120,17 +120,17 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           {this.checkbox(
             "db",
             () => this.includeDb,
-            (v) => (this.includeDb = v),
+            (v) => (this.includeDb = v)
           )}
           {this.checkbox(
             "assets",
             () => this.includeAssets,
-            (v) => (this.includeAssets = v),
+            (v) => (this.includeAssets = v)
           )}
           {this.checkbox(
             "storage",
             () => this.includeStorage,
-            (v) => (this.includeStorage = v),
+            (v) => (this.includeStorage = v)
           )}
           {this.checkbox(
             "extensions",
@@ -141,7 +141,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
               // someone ticks the box. The list comes back fast (no
               // disk walking — just metadata from the ExtensionManager).
               if (v && !this.extensionsLoaded) this.loadExtensions();
-            },
+            }
           )}
 
           {this.includeExtensions && this.extensionList()}
@@ -337,7 +337,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     } catch (e) {
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("extensions_load_failed"))),
+        errorDetail(e, String(trans("extensions_load_failed")))
       );
     } finally {
       this.extensionsLoading = false;
@@ -348,7 +348,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   checkbox(
     key: "db" | "assets" | "storage" | "extensions",
     get: () => boolean,
-    set: (v: boolean) => void,
+    set: (v: boolean) => void
   ) {
     return (
       <label className="BackupExport-checkbox">
@@ -546,7 +546,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       this.starting = false;
       app.alerts.show(
         { type: "error" },
-        errorDetail(e, String(trans("start_failed"))),
+        errorDetail(e, String(trans("start_failed")))
       );
       m.redraw();
     }
