@@ -11,6 +11,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseRestorer;
 use Ramon\Backup\Database\Dialect;
+use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\StoragePaths;
 use RuntimeException;
 use Throwable;
@@ -37,6 +38,9 @@ use Throwable;
 class ImportJob
 {
     public const BUDGET_BYTES = 4_194_304;
+
+    /** Nomes de entradas não resolvidas guardados para diagnóstico. */
+    public const UNRESOLVED_SAMPLE_LIMIT = 20;
 
     /**
      * Decryption private key for the current run. Held ONLY in memory
@@ -125,10 +129,22 @@ class ImportJob
                 'selection'        => $this->normaliseSelection($selection),
             ],
             'archive_meta'  => null,
+            'warnings'      => [],
+            // Amostra limitada dos nomes que não resolveram destino,
+            // para o operador saber O QUE ficou fora sem carregar o
+            // state com dezenas de milhares de caminhos.
+            'unresolved_sample' => [],
             'progress' => [
                 'total_bytes'        => filesize($upload) ?: 0,
                 'processed_bytes'    => 0,
                 'extracted_entries'  => 0,
+                // Entradas que o arquivo trazia e o operador desmarcou.
+                'skipped_entries'    => 0,
+                // Entradas aceitas na seleção cujo destino não pôde ser
+                // resolvido — restauração INCOMPLETA. Separado de
+                // `skipped_entries` porque um valor > 0 aqui é defeito,
+                // não escolha.
+                'unresolved_entries' => 0,
                 'restored_statements' => 0,
                 'percent'            => 0.0,
             ],
@@ -194,6 +210,27 @@ class ImportJob
             }
             $meta = $reader->meta();
             $state->set('archive_meta', $meta);
+
+            // Stack guard — FIRST check, before the engine guard and
+            // before a single byte is written. A backup taken on a
+            // newer PHP cannot be replayed onto an older one: the
+            // restored vendor/ tree and composer.lock were resolved
+            // for the source's version. Unconditional (not gated on
+            // the file selection) because a DB-only restore also
+            // rewrites `extensions_enabled`, re-enabling extensions
+            // this PHP cannot parse.
+            $blocking = StackSnapshot::blockingReason($meta);
+            if ($blocking !== null) {
+                throw new RuntimeException($blocking);
+            }
+
+            $advisories = StackSnapshot::advisories($meta);
+            if ($advisories !== []) {
+                $state->set('warnings', array_values(array_unique(array_merge(
+                    (array) $state->get('warnings', []),
+                    $advisories
+                ))));
+            }
 
             // Cross-engine guard: archives from format_version >= 2
             // record which engine the SQL was generated for. If that
@@ -289,6 +326,14 @@ class ImportJob
                         ? $this->resolveDestination($entry['name'], $state)
                         : null;
 
+                    // Aceita na seleção mas sem destino resolvível (id
+                    // de extensão fora do mapa do manifesto, raiz não
+                    // permitida). Os bytes são drenados igual, mas isso
+                    // é perda de dado — nunca pode passar por "extraído".
+                    $unresolved = $accept
+                        && $entry['type'] === Format::TYPE_FILE
+                        && $dest === null;
+
                     // Open a sink: SQL dump file, target file on disk,
                     // or null (drain into the void). We always consume
                     // the bytes — skipping just means not writing them.
@@ -322,7 +367,14 @@ class ImportJob
                         }
                     }
 
-                    $progress['extracted_entries']++;
+                    if ($unresolved) {
+                        $progress['unresolved_entries']++;
+                        $this->noteUnresolved($state, (string) $entry['name']);
+                    } elseif ($accept) {
+                        $progress['extracted_entries']++;
+                    } else {
+                        $progress['skipped_entries']++;
+                    }
                     $budget -= $entry['length'];
                 }
             } finally {
@@ -618,13 +670,65 @@ class ImportJob
         $state->save();
     }
 
+    /**
+     * Registra, no máximo LIMITE vezes, o nome de uma entrada aceita
+     * cujo destino não resolveu. A amostra é limitada de propósito: o
+     * contador em `progress.unresolved_entries` é que diz o tamanho do
+     * estrago, a lista só serve para identificar o padrão.
+     */
+    private function noteUnresolved(JobState $state, string $name): void
+    {
+        $sample = (array) $state->get('unresolved_sample', []);
+        if (count($sample) >= self::UNRESOLVED_SAMPLE_LIMIT) {
+            return;
+        }
+
+        $sample[] = $name;
+        $state->set('unresolved_sample', array_values($sample));
+    }
+
+    /**
+     * Fecha o job. Uma restauração que perdeu entradas termina em
+     * `done` — os dados já estão no disco, abortar aqui não desfaz
+     * nada — mas NUNCA com a mensagem de sucesso liso: o contador de
+     * não-resolvidas vira aviso explícito, que é justamente o que
+     * faltava quando um import incompleto se apresentava como pronto.
+     */
     private function runFinalize(JobState $state): void
     {
         $paths = $state->get('paths');
         @unlink($paths['dump']);
         @unlink($paths['archive']);
+
+        $progress   = (array) $state->get('progress');
+        $unresolved = (int) ($progress['unresolved_entries'] ?? 0);
+        $warnings   = (array) $state->get('warnings', []);
+
+        if ($unresolved > 0) {
+            $sample = array_map(
+                fn ($n) => (string) $n,
+                array_slice(array_values((array) $state->get('unresolved_sample', [])), 0, 5)
+            );
+            $warnings[] = sprintf(
+                'Restauração INCOMPLETA: %d entrada(s) selecionada(s) não pôde(ram) ser '
+                .'gravada(s) porque o destino não resolveu%s. Confira a integridade do '
+                .'arquivo e o manifesto de extensões antes de considerar esta migração '
+                .'concluída.',
+                $unresolved,
+                $sample === [] ? '' : ' — por exemplo: '.implode(', ', $sample)
+            );
+        }
+
+        $state->set('warnings', array_values(array_unique(array_map(
+            fn ($w) => (string) $w,
+            $warnings
+        ))));
+        $state->set('incomplete', $unresolved > 0);
         $state->set('phase', 'done');
-        $state->set('message', 'Restore complete.');
+        $state->set('message', $unresolved > 0
+            ? sprintf('Restore finished with %d unrestored entr%s.', $unresolved, $unresolved === 1 ? 'y' : 'ies')
+            : 'Restore complete.'
+        );
         $state->save();
     }
 

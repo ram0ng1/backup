@@ -30,7 +30,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.2', '8.3', '8.4']
+        # Espelha a constraint ">=8.3 <8.6" do composer.json. 8.2 saiu
+        # (abaixo do piso do flarum/core 2.x) e 8.5 entrou.
+        php: ['8.3', '8.4', '8.5']
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
