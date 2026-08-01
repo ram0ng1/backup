@@ -617,6 +617,25 @@
   font-size: 12px;
 }
 
+// Bloco das opções que decidem o que do SERVIDOR sobrevive ao restore.
+// Separado por uma régua de propósito: são escolhas de natureza
+// diferente das caixas "o que do backup aplicar" acima.
+.BackupImport-serverState {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+
+  h4 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  > .helpText {
+    margin-bottom: 8px;
+  }
+}
+
 .BackupImport-extList {
   margin: 4px 0 8px 28px;
   padding: 8px 12px;
