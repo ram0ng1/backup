@@ -51,6 +51,19 @@ class ImportCommand extends AbstractCommand
                 InputOption::VALUE_OPTIONAL,
                 'Restore extensions. Omit the value for ALL, or pass a comma-separated list of ids.',
                 false
+            )
+            ->addOption(
+                'root-extend',
+                null,
+                InputOption::VALUE_NONE,
+                'Replace this install\'s root extend.php with the backup\'s (off by default — it is loaded before Flarum\'s error handler).'
+            )
+            ->addOption(
+                'preserve-settings',
+                null,
+                InputOption::VALUE_NEGATABLE,
+                'Keep this server\'s mail / queue / integration settings across the restore.',
+                true
             );
     }
 
@@ -113,7 +126,30 @@ class ImportCommand extends AbstractCommand
                 .', posts parsed: '.((int) ($rewrite['posts_parsed'] ?? 0)));
         }
 
-        return 0;
+        return $this->reportOutcome($state);
+    }
+
+    /**
+     * Despeja os avisos e escolhe o exit code.
+     *
+     * Um restore que terminou `incomplete` sai com 1 de propósito: são os
+     * casos em que o operador precisa agir antes de recarregar o fórum —
+     * entrada não gravada, ou classe que o extend.php da raiz referencia
+     * e o autoloader não resolve. Sair 0 aqui é o que faz um script de
+     * deploy seguir adiante rumo a um HTTP 500 sem mensagem.
+     */
+    private function reportOutcome(JobState $state): int
+    {
+        foreach ((array) $state->get('warnings', []) as $warning) {
+            $this->output->writeln('<comment>! '.(string) $warning.'</comment>');
+        }
+
+        if (! $state->get('incomplete', false)) {
+            return 0;
+        }
+
+        $this->error('Restore finished INCOMPLETE — review the warnings above before reloading the forum.');
+        return 1;
     }
 
     /**
@@ -130,7 +166,9 @@ class ImportCommand extends AbstractCommand
             || $this->input->hasParameterOption('--no-assets')
             || $this->input->hasParameterOption('--storage')
             || $this->input->hasParameterOption('--no-storage')
-            || $this->input->hasParameterOption('--extensions');
+            || $this->input->hasParameterOption('--extensions')
+            || $this->input->hasParameterOption('--root-extend')
+            || $this->input->hasParameterOption('--no-preserve-settings');
 
         if (! $touched) {
             return null;
@@ -141,6 +179,12 @@ class ImportCommand extends AbstractCommand
             'assets'     => (bool) $this->input->getOption('assets'),
             'storage'    => (bool) $this->input->getOption('storage'),
             'extensions' => $this->resolveExtensionSelection(),
+            /*
+             * Assimétricos de propósito: sobrescrever o extend.php da raiz
+             * exige pedir, preservar a config deste servidor exige recusar.
+             */
+            'root_extend'       => (bool) $this->input->getOption('root-extend'),
+            'preserve_settings' => (bool) $this->input->getOption('preserve-settings'),
         ];
     }
 

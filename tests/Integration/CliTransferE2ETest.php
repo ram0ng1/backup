@@ -141,13 +141,7 @@ final class CliTransferE2ETest extends TestCase
         $this->assertGreaterThan(0, filesize($archive));
 
         // --- backup:import -------------------------------------------------
-        $importJob = new ImportJob(
-            $this->storagePaths,
-            $this->paths,
-            $target,
-            $this->cipher(),
-            $this->config
-        );
+        $importJob = $this->importJob($target);
         $importTester = new CommandTester(new ImportCommand($importJob, $this->storagePaths));
         $importStatus = $importTester->execute([
             'archive' => $archive,
@@ -165,7 +159,7 @@ final class CliTransferE2ETest extends TestCase
     public function test_import_refuses_without_yes(): void
     {
         $target = $this->capsule->getConnection('target');
-        $importJob = new ImportJob($this->storagePaths, $this->paths, $target, $this->cipher(), $this->config);
+        $importJob = $this->importJob($target);
         $tester = new CommandTester(new ImportCommand($importJob, $this->storagePaths));
 
         $status = $tester->execute(['archive' => __FILE__]); // any existing file
@@ -219,7 +213,7 @@ final class CliTransferE2ETest extends TestCase
         $archive = $this->storagePaths->backupsDir().DIRECTORY_SEPARATOR.(string) $estate->get('result')['filename'];
 
         // Import with the private key, watching the job-state file.
-        $importJob = new ImportJob($this->storagePaths, $this->paths, $target, $this->cipher(), $this->config);
+        $importJob = $this->importJob($target);
         $importId = bin2hex(random_bytes(8));
         $importDir = $this->storagePaths->importJobDir($importId);
         copy($archive, $importDir.DIRECTORY_SEPARATOR.'upload.flarum');
@@ -251,6 +245,29 @@ final class CliTransferE2ETest extends TestCase
         $actual = Fixture::snapshot($target);
         $this->assertSame($expected['authors'], $actual['authors']);
         $this->assertSame($expected['posts'], $actual['posts']);
+    }
+
+    /**
+     * ImportJob com as dependências de reconciliação. Os dois últimos
+     * argumentos entraram junto com o staging de `project/*`; sem eles o
+     * job não sabe reconciliar composer.json nem preservar settings.
+     */
+    private function importJob(\Illuminate\Database\ConnectionInterface $target): ImportJob
+    {
+        $settings = Mockery::mock(\Flarum\Settings\SettingsRepositoryInterface::class);
+        $settings->shouldReceive('get')->andReturn('');
+        $settings->shouldReceive('set')->andReturnNull();
+        $settings->shouldReceive('all')->andReturn([]);
+
+        return new ImportJob(
+            $this->storagePaths,
+            $this->paths,
+            $target,
+            $this->cipher(),
+            $this->config,
+            new \Ramon\Backup\Project\ProjectReconciler($this->paths),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+        );
     }
 
     private function cipher(): BackupCipher

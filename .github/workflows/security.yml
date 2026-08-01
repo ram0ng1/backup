@@ -65,6 +65,18 @@ jobs:
           ls -l semgrep-generic.sarif
           exit 0
 
+      # Achado com `nosemgrep` na linha já não entra no exit code do
+      # semgrep, mas ainda vai para o SARIF marcado como `inSource`. O bot
+      # de review do GitHub anota mesmo assim, enchendo o PR de alerta em
+      # linha que carrega a justificativa ao lado. Filtramos só a cópia
+      # destinada ao code scanning; o SARIF íntegro segue no artefato.
+      - name: Filtrar achados suprimidos do upload — genérico
+        if: always()
+        run: |
+          IN=semgrep-generic.sarif
+          OUT=semgrep-generic-clean.sarif
+          python3 .github/semgrep/strip-suppressed.py "$IN" "$OUT" || cp "$IN" "$OUT"
+
       - name: Upload SARIF — genérico
         if: always()
         # Code scanning pode não estar habilitado (repo privado sem GitHub
@@ -73,7 +85,7 @@ jobs:
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
         with:
-          sarif_file: semgrep-generic.sarif
+          sarif_file: semgrep-generic-clean.sarif
           category: semgrep
 
       # ---- Camada 2: regras específicas de Flarum v2 --------------------
@@ -111,12 +123,20 @@ jobs:
           [ "$BLOCK" = "1" ] && exit $EXIT
           exit 0
 
+      # Mesmo motivo da camada 1 — ver o comentário lá.
+      - name: Filtrar achados suprimidos do upload — Flarum v2
+        if: always()
+        run: |
+          IN=semgrep-flarum.sarif
+          OUT=semgrep-flarum-clean.sarif
+          python3 .github/semgrep/strip-suppressed.py "$IN" "$OUT" || cp "$IN" "$OUT"
+
       - name: Upload SARIF — Flarum v2
         if: always()
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
         with:
-          sarif_file: semgrep-flarum.sarif
+          sarif_file: semgrep-flarum-clean.sarif
           category: flarum-v2-security
 
       # Canal de resultados independente do code scanning estar ligado:
@@ -129,5 +149,7 @@ jobs:
           path: |
             semgrep-generic.sarif
             semgrep-flarum.sarif
+            semgrep-generic-clean.sarif
+            semgrep-flarum-clean.sarif
           retention-days: 30
           if-no-files-found: warn

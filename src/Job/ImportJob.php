@@ -12,6 +12,8 @@ use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseRestorer;
 use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Environment\StackSnapshot;
+use Ramon\Backup\Project\ProjectReconciler;
+use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use RuntimeException;
 use Throwable;
@@ -20,19 +22,35 @@ use Throwable;
  * Mirror of ExportJob, but reversed: pull entries from a `.flarum`
  * archive and apply them to the running install.
  *
- * Strategy is always "replace":
+ * Strategy is "replace" for o conteúdo do fórum e "reconcilia" para o
+ * que descreve o servidor:
  *   - DB statements include `DROP TABLE IF EXISTS` per table — running
  *     them recreates the schema cleanly.
  *   - File entries overwrite anything currently at the destination
  *     path. We never touch paths outside the four bundleable roots
  *     (assets/, storage/, extensions/), so a malicious archive can't
  *     escape the install.
+ *   - `project/*` (composer.json, composer.lock, extend.php da raiz) NÃO
+ *     é gravado direto: vai para um staging dentro do job e passa pelo
+ *     {@see ProjectReconciler}, que faz merge em vez de overwrite. Um
+ *     manifesto de outro servidor sobrescrito é o que já derrubou um
+ *     fórum inteiro — poda o pacote, o extend.php fica apontando para a
+ *     classe podada, e o boot morre antes do handler de erro.
+ *   - As chaves de `settings` que descrevem ESTE servidor (SMTP, fila,
+ *     tokens) são fotografadas antes do restore e regravadas depois —
+ *     ver {@see SettingsPreserver}.
  *
  * Phases:
  *   inspect   → openHeader + decrypt prep (one tick)
  *   extract   → pull each entry; SQL goes into dump.sql, files go to
- *               their destination directly
+ *               their destination directly, `project/*` vai para staging
+ *   reconcile → merge do composer.json, extend.php opcional, snapshot
+ *               das settings preservadas
  *   restore   → replay dump.sql through DatabaseRestorer
+ *   rewrite   → troca a URL de origem pela do destino e regrava as
+ *               settings preservadas
+ *   verify    → procura classe referenciada pelo extend.php da raiz que
+ *               o autoloader não resolve (o modo de falha silencioso)
  *   finalize  → cleanup
  */
 class ImportJob
@@ -41,6 +59,17 @@ class ImportJob
 
     /** Nomes de entradas não resolvidas guardados para diagnóstico. */
     public const UNRESOLVED_SAMPLE_LIMIT = 20;
+
+    /** Subdiretório do job onde os `project/*` esperam a reconciliação. */
+    public const PROJECT_STAGING_DIR = 'project';
+
+    /**
+     * Arquivo do snapshot de settings preservadas. Fica fora do job.json
+     * porque carrega segredo do destino (senha de SMTP, token OAuth) e o
+     * job.json é reescrito a cada tick. Mesma exposição do dump.sql, que
+     * já vive neste diretório 0700 e é apagado no finalize.
+     */
+    public const PRESERVED_SETTINGS_FILE = 'preserved-settings.json';
 
     /**
      * Decryption private key for the current run. Held ONLY in memory
@@ -70,7 +99,9 @@ class ImportJob
         protected Paths $appPaths,
         ConnectionInterface $db,
         protected BackupCipher $cipher,
-        protected Config $config
+        protected Config $config,
+        protected ProjectReconciler $project,
+        protected SettingsPreserver $preserver
     ) {
         $this->db = $db;
     }
@@ -90,9 +121,12 @@ class ImportJob
      * dir as `upload.flarum` (the upload controller does that).
      */
     /**
-     * @param array{db?: bool, assets?: bool, storage?: bool, extensions?: bool|list<string>}|null $selection
+     * @param array{db?: bool, assets?: bool, storage?: bool, extensions?: bool|list<string>, root_extend?: bool, preserve_settings?: bool}|null $selection
      *        null = restore everything in the archive
      *        extensions: true = all, false = none, array = specific extension dirs
+     *        root_extend: sobrescrever o extend.php da raiz (opt-in)
+     *        preserve_settings: manter as settings de infraestrutura deste
+     *                           servidor por cima do restore (opt-out)
      */
     public function start(string $jobId, ?string $privateKey, bool $confirmReplace, ?array $selection, ?int $userId): JobState
     {
@@ -171,14 +205,16 @@ class ImportJob
 
         try {
             match ($phase) {
-                'inspect'  => $this->runInspect($state),
-                'extract'  => $this->runExtract($state),
-                'restore'  => $this->runRestore($state),
-                'rewrite'  => $this->runRewrite($state),
-                'finalize' => $this->runFinalize($state),
-                'done'     => null,
-                'error'    => null,
-                default    => throw new RuntimeException("Unknown phase: $phase"),
+                'inspect'   => $this->runInspect($state),
+                'extract'   => $this->runExtract($state),
+                'reconcile' => $this->runReconcile($state),
+                'restore'   => $this->runRestore($state),
+                'rewrite'   => $this->runRewrite($state),
+                'verify'    => $this->runVerify($state),
+                'finalize'  => $this->runFinalize($state),
+                'done'      => null,
+                'error'     => null,
+                default     => throw new RuntimeException("Unknown phase: $phase"),
             };
         } catch (Throwable $e) {
             $state->set('phase', 'error');
@@ -406,21 +442,194 @@ class ImportJob
         $state->set('progress', $progress);
         $state->set('message',
             $cursor['extract_done']
-                ? 'Restoring database…'
+                ? 'Reconciling project files…'
                 : 'Extracting… '.$progress['extracted_entries'].' entries'
         );
 
         if ($cursor['extract_done']) {
-            // No DB dump? Skip straight past the restore phase, but
-            // still run the rewrite — files might still want URL fixups.
-            $state->set('phase', is_file($paths['dump']) && filesize($paths['dump']) > 0 ? 'restore' : 'rewrite');
+            /*
+             * A reconciliação roda SEMPRE, inclusive num restore só de
+             * banco: é ela que compara os manifestos e avisa o que falta.
+             */
+            $state->set('phase', 'reconcile');
         }
 
         $state->save();
     }
 
     /**
-     * Phase 3 — replay dump.sql through DatabaseRestorer in chunks. We
+     * Phase 3 — reconcilia o que descreve o servidor, antes de o banco
+     * ser tocado.
+     *
+     * Duas responsabilidades, ambas com a mesma justificativa: o backup
+     * descreve o fórum de ORIGEM, e há estado que pertence ao destino.
+     * Aqui o composer.json é unido (nunca sobrescrito), o extend.php da
+     * raiz só é aplicado sob opt-in, e as settings de infraestrutura do
+     * destino são fotografadas enquanto a tabela ainda é a dele.
+     */
+    private function runReconcile(JobState $state): void
+    {
+        $paths     = $state->get('paths');
+        $opts      = (array) $state->get('options');
+        $selection = $opts['selection'] ?? null;
+
+        $staging = $this->projectStagingDir($state);
+
+        $applyComposer   = $selection === null || $this->hasAnyExtensionSelected($selection);
+        $applyRootExtend = $selection !== null && ! empty($selection['root_extend']);
+
+        try {
+            $result = $this->project->reconcile($staging, $applyComposer, $applyRootExtend);
+            $this->addWarnings($state, $result['warnings']);
+            $state->set('project_applied', array_values($result['applied']));
+        } catch (Throwable $e) {
+            $this->addWarnings($state, [
+                'Falha ao reconciliar os arquivos da raiz do projeto: '.$e->getMessage()
+                .'. O composer.json e o extend.php deste servidor ficaram como estavam.',
+            ]);
+        }
+
+        $this->snapshotPreservedSettings($state, $selection);
+
+        $hasDump = is_file($paths['dump']) && filesize($paths['dump']) > 0;
+        $state->set('phase', $hasDump ? 'restore' : 'rewrite');
+        $state->set('message', $hasDump ? 'Restoring database…' : 'Rewriting URLs…');
+        $state->save();
+    }
+
+    /**
+     * Fotografa as settings preservadas num arquivo próprio do job. Roda
+     * antes do DROP/CREATE; sem dump de banco não há nada a preservar,
+     * porque a tabela não vai ser tocada.
+     *
+     * @param array<string, mixed>|null $selection
+     */
+    private function snapshotPreservedSettings(JobState $state, ?array $selection): void
+    {
+        $wantsDb = $selection === null || ! empty($selection['db']);
+        $wantsPreserve = $selection === null || ! empty($selection['preserve_settings']);
+
+        if (! $wantsDb || ! $wantsPreserve) {
+            return;
+        }
+
+        try {
+            $snapshot = $this->preserver->snapshot();
+        } catch (Throwable) {
+            return;
+        }
+
+        if ($snapshot === []) {
+            return;
+        }
+
+        $encoded = json_encode($snapshot, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            return;
+        }
+
+        $file = $this->preservedSettingsFile($state);
+        if (@file_put_contents($file, $encoded, LOCK_EX) === false) {
+            return;
+        }
+        @chmod($file, 0600);
+
+        $state->set('preserved_settings_count', count($snapshot));
+    }
+
+    /**
+     * Regrava o snapshot depois do restore E depois do rewrite de URL,
+     * para ter a última palavra sobre qualquer chave que os dois toquem.
+     */
+    private function reapplyPreservedSettings(JobState $state): void
+    {
+        $file = $this->preservedSettingsFile($state);
+        if (! is_file($file)) {
+            return;
+        }
+
+        $raw = @file_get_contents($file); /* arquivo do próprio job, 0600; nosemgrep: flarum-v2-server-side-fetch */
+        @unlink($file);
+
+        if ($raw === false) {
+            return;
+        }
+        $snapshot = json_decode($raw, true);
+        if (! is_array($snapshot) || $snapshot === []) {
+            return;
+        }
+
+        try {
+            $restored = $this->preserver->reapply($snapshot);
+        } catch (Throwable $e) {
+            $this->addWarnings($state, [
+                'Não foi possível regravar a configuração deste servidor após o restore: '.$e->getMessage()
+                .'. Reveja SMTP, fila e integrações no painel.',
+            ]);
+            return;
+        }
+
+        if ($restored === []) {
+            return;
+        }
+
+        $state->set('preserved_settings_restored', count($restored));
+        $this->addWarnings($state, [sprintf(
+            '%d configuração(ões) deste servidor foram preservadas do backup (SMTP, fila, integrações). '
+            .'Ajuste a lista em `%s` se algo específico do seu ambiente ainda estiver sendo sobrescrito.',
+            count($restored),
+            SettingsPreserver::EXTRA_KEY
+        )]);
+    }
+
+    /** Caminho do staging dos `project/*`, sem criar nada. */
+    private function projectStagingPath(JobState $state): string
+    {
+        $paths = (array) $state->get('paths');
+        return rtrim((string) ($paths['dir'] ?? ''), '/\\')
+            .DIRECTORY_SEPARATOR.self::PROJECT_STAGING_DIR;
+    }
+
+    /**
+     * Mesmo caminho, garantindo o diretório. 0700 pelo mesmo motivo do
+     * resto do job: o staging guarda o composer.json e o extend.php da
+     * origem enquanto esperam a reconciliação.
+     */
+    private function projectStagingDir(JobState $state): string
+    {
+        $dir = $this->projectStagingPath($state);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+        return $dir;
+    }
+
+    private function preservedSettingsFile(JobState $state): string
+    {
+        $paths = (array) $state->get('paths');
+        return rtrim((string) ($paths['dir'] ?? ''), '/\\')
+            .DIRECTORY_SEPARATOR.self::PRESERVED_SETTINGS_FILE;
+    }
+
+    /**
+     * Acrescenta avisos sem duplicar. O finalize também mexe nessa
+     * lista, então a deduplicação tem que valer para os dois.
+     *
+     * @param list<string> $new
+     */
+    private function addWarnings(JobState $state, array $new): void
+    {
+        if ($new === []) {
+            return;
+        }
+        $state->set('warnings', array_values(array_unique(array_merge(
+            array_map(fn ($w) => (string) $w, (array) $state->get('warnings', [])),
+            array_map(fn ($w) => (string) $w, $new)
+        ))));
+    }
+
+    /**
+     * Phase 4 — replay dump.sql through DatabaseRestorer in chunks. We
      * track restore_offset so each tick resumes from where it left off.
      */
     private function runRestore(JobState $state): void
@@ -589,7 +798,7 @@ class ImportJob
     }
 
     /**
-     * Phase 4 — URL rewrite. Backups taken from one Flarum and
+     * Phase 5 — URL rewrite. Backups taken from one Flarum and
      * restored onto another would otherwise leave the OLD forum URL
      * everywhere — settings, post content, parsed_content. That breaks
      * redirects, login cookies, and any absolute link the old site had
@@ -666,6 +875,52 @@ class ImportJob
             $state->set('message', 'Skipping URL rewrite (URLs match or unknown).');
         }
 
+        /*
+         * Depois do REPLACE de URL de propósito: a configuração deste
+         * servidor tem que ser a última a escrever nas chaves que as duas
+         * etapas encostam.
+         */
+        $this->reapplyPreservedSettings($state);
+
+        $state->set('phase', 'verify');
+        $state->save();
+    }
+
+    /**
+     * Phase 6 — checagem de sanidade do boot.
+     *
+     * O core dá `require` no `extend.php` da raiz dentro de
+     * `Site::fromPaths()`, antes de existir qualquer handler de erro. Uma
+     * classe ausente ali não vira 500 com stack trace: vira exit 255 com
+     * saída vazia e log do Flarum vazio. Essa fase troca esse silêncio
+     * por um aviso nomeando a classe.
+     *
+     * Limite conhecido: a checagem usa o autoloader deste processo, então
+     * enxerga o vendor/ como está agora. Um `composer install` posterior
+     * ainda pode podar pacote — o que o merge do composer.json (ver
+     * ProjectReconciler) existe para evitar.
+     */
+    private function runVerify(JobState $state): void
+    {
+        try {
+            $dangling = $this->project->danglingClassReferences();
+        } catch (Throwable) {
+            $dangling = [];
+        }
+
+        if ($dangling !== []) {
+            $state->set('boot_dangling_classes', array_values($dangling));
+            $this->addWarnings($state, [sprintf(
+                'BOOT EM RISCO: o extend.php da raiz referencia %s que o autoloader não resolve. '
+                .'O Flarum carrega esse arquivo antes do handler de erro, então isso derruba o fórum '
+                .'com HTTP 500 sem mensagem. Reinstale o pacote que fornece a classe ou comente o '
+                .'extender antes de recarregar.',
+                count($dangling) === 1
+                    ? 'a classe `'.$dangling[0].'`'
+                    : 'as classes `'.implode('`, `', array_slice($dangling, 0, 5)).'`'
+            )]);
+        }
+
         $state->set('phase', 'finalize');
         $state->save();
     }
@@ -699,9 +954,12 @@ class ImportJob
         $paths = $state->get('paths');
         @unlink($paths['dump']);
         @unlink($paths['archive']);
+        @unlink($this->preservedSettingsFile($state));
+        $this->paths->deleteDir($this->projectStagingPath($state));
 
         $progress   = (array) $state->get('progress');
         $unresolved = (int) ($progress['unresolved_entries'] ?? 0);
+        $dangling   = (array) $state->get('boot_dangling_classes', []);
         $warnings   = (array) $state->get('warnings', []);
 
         if ($unresolved > 0) {
@@ -723,25 +981,40 @@ class ImportJob
             fn ($w) => (string) $w,
             $warnings
         ))));
-        $state->set('incomplete', $unresolved > 0);
+
+        /*
+         * Referência pendurada no extend.php da raiz conta como restore
+         * incompleto tanto quanto uma entrada não gravada: nos dois casos
+         * o operador precisa agir antes de recarregar, e nos dois a tela
+         * de sucesso limpo seria mentira.
+         */
+        $state->set('incomplete', $unresolved > 0 || $dangling !== []);
         $state->set('phase', 'done');
-        $state->set('message', $unresolved > 0
-            ? sprintf('Restore finished with %d unrestored entr%s.', $unresolved, $unresolved === 1 ? 'y' : 'ies')
-            : 'Restore complete.'
-        );
+        $state->set('message', match (true) {
+            $dangling !== [] => 'Restore finished — the root extend.php references classes that are not installed.',
+            $unresolved > 0  => sprintf('Restore finished with %d unrestored entr%s.', $unresolved, $unresolved === 1 ? 'y' : 'ies'),
+            default          => 'Restore complete.',
+        });
         $state->save();
     }
 
     /**
      * Normalise the user's selection into a stable shape:
      *   ['db' => bool, 'assets' => bool, 'storage' => bool,
-     *    'extensions' => true | false | list<string>]
+     *    'extensions' => true | false | list<string>,
+     *    'root_extend' => bool, 'preserve_settings' => bool]
      *
      * `null` short-circuits to restore-everything for backwards
      * compatibility with older import requests.
      *
+     * Os dois campos novos têm defaults assimétricos de propósito:
+     * `root_extend` é opt-in porque sobrescrever o extend.php da raiz
+     * troca configuração viva do destino; `preserve_settings` é opt-out
+     * porque perder a configuração de infraestrutura do destino é o
+     * defeito que essa camada existe para impedir.
+     *
      * @param array<string, mixed>|null $raw
-     * @return array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>}|null
+     * @return array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>, root_extend: bool, preserve_settings: bool}|null
      */
     private function normaliseSelection(?array $raw): ?array
     {
@@ -758,10 +1031,12 @@ class ImportJob
         }
 
         return [
-            'db'         => ! empty($raw['db']),
-            'assets'     => ! empty($raw['assets']),
-            'storage'    => ! empty($raw['storage']),
-            'extensions' => $extensions,
+            'db'                => ! empty($raw['db']),
+            'assets'            => ! empty($raw['assets']),
+            'storage'           => ! empty($raw['storage']),
+            'extensions'        => $extensions,
+            'root_extend'       => ! empty($raw['root_extend']),
+            'preserve_settings' => ! array_key_exists('preserve_settings', $raw) || ! empty($raw['preserve_settings']),
         ];
     }
 
@@ -789,10 +1064,14 @@ class ImportJob
             'assets'  => ! empty($selection['assets']),
             'storage' => ! empty($selection['storage']),
             'extensions' => $this->isExtensionAllowed($name, $selection['extensions'] ?? null),
-            // composer.json / composer.lock follow the extensions
-            // toggle: if the admin opted out of all extensions, they
-            // didn't ask to restore composer either.
-            'project' => $this->hasAnyExtensionSelected($selection),
+            /*
+             * `project/*` é sempre extraído, mesmo com tudo desmarcado:
+             * ele vai para um staging, não para o disco vivo, e é o que
+             * permite ao reconciliador comparar o manifesto do backup com
+             * o deste servidor e avisar quais pacotes faltam. Quem decide
+             * o que efetivamente sobrescreve algo é o runReconcile.
+             */
+            'project' => true,
             default   => true,
         };
     }
@@ -900,14 +1179,21 @@ class ImportJob
             $base = $map[$extId] ?? null;
             if ($base === null) return null;
         } elseif ($root === 'project') {
-            // Project-root files. Only composer.json / composer.lock
-            // are accepted here — any other path is rejected outright
-            // so a hostile archive can't drop, say, a `.htaccess` or
-            // a public/ override into the install.
-            if (! in_array($rest, ['composer.json', 'composer.lock'], true)) {
+            /*
+             * Arquivos da raiz do projeto. A allow-list continua fechada
+             * — nada além dos três nomes conhecidos entra, para um
+             * arquivo hostil não conseguir largar um `.htaccess` ou um
+             * override de public/ na instalação.
+             *
+             * A diferença para as outras raízes: o destino aqui é um
+             * staging DENTRO do diretório do job, nunca a raiz viva. O
+             * que chega ao disco real é decidido depois pelo
+             * ProjectReconciler, que faz merge em vez de overwrite.
+             */
+            if (! in_array($rest, ProjectReconciler::ALLOWED, true)) {
                 return null;
             }
-            $base = rtrim($this->appPaths->base, '/\\');
+            $base = $this->projectStagingDir($state);
             $inner = $rest;
         } else {
             $base = match ($root) {

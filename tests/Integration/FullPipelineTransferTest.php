@@ -141,13 +141,7 @@ final class FullPipelineTransferTest extends TestCase
 
     private function runImport(Connection $target, string $archive): void
     {
-        $job = new ImportJob(
-            $this->storagePaths,
-            $this->paths,
-            $target,
-            $this->cipher(),
-            $this->config
-        );
+        $job = $this->importJob($target);
 
         $jobId = bin2hex(random_bytes(8));
         $dir = $this->storagePaths->importJobDir($jobId);
@@ -189,6 +183,29 @@ final class FullPipelineTransferTest extends TestCase
             $t->dateTime('created_at')->nullable();
             $t->dateTime('updated_at')->nullable();
         });
+    }
+
+    /**
+     * ImportJob com as dependências de reconciliação. Os dois últimos
+     * argumentos entraram junto com o staging de `project/*`; sem eles o
+     * job não sabe reconciliar composer.json nem preservar settings.
+     */
+    private function importJob(\Illuminate\Database\ConnectionInterface $target): ImportJob
+    {
+        $settings = Mockery::mock(\Flarum\Settings\SettingsRepositoryInterface::class);
+        $settings->shouldReceive('get')->andReturn('');
+        $settings->shouldReceive('set')->andReturnNull();
+        $settings->shouldReceive('all')->andReturn([]);
+
+        return new ImportJob(
+            $this->storagePaths,
+            $this->paths,
+            $target,
+            $this->cipher(),
+            $this->config,
+            new \Ramon\Backup\Project\ProjectReconciler($this->paths),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+        );
     }
 
     private function cipher(): BackupCipher

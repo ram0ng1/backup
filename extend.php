@@ -21,6 +21,7 @@ use Ramon\Backup\Api\Controller\UploadImportController;
 use Ramon\Backup\Console\ExportCommand;
 use Ramon\Backup\Console\ImportCommand;
 use Ramon\Backup\Console\PruneStaleJobsCommand;
+use Ramon\Backup\Settings\SettingsPreserver;
 
 return [
     (new Extend\Frontend('admin'))
@@ -46,7 +47,15 @@ return [
         // Same trust model as ramon/verified — the matching PRIVATE key is
         // pasted into config.php under `backup-private-key`, never stored
         // in the database.
-        ->default('ramon-backup.encryption_public_key', ''),
+        ->default('ramon-backup.encryption_public_key', '')
+        /*
+         * Padrões extra de chaves de `settings` que um restore não pode
+         * sobrescrever, um por linha (sufixo `*` casa por prefixo). O
+         * baseline — SMTP, fila, tokens desta instalação — está em
+         * SettingsPreserver::BASELINE; esta chave existe para o operador
+         * acrescentar o que for específico do ambiente dele.
+         */
+        ->default(SettingsPreserver::EXTRA_KEY, ''),
 
     (new Extend\Routes('api'))
         ->get('/backup/backups',                'backup.list',          ListBackupsController::class)

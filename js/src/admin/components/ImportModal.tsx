@@ -44,6 +44,9 @@ interface ArchiveManifest {
   // New archives ship rich descriptors.
   extensions?: string[] | ArchiveExtensionEntry[];
   has_composer?: boolean;
+  // Archives from before the project-reconcile work don't carry the
+  // site's root extend.php, so the toggle for it stays hidden.
+  has_root_extend?: boolean;
 }
 
 interface InspectResult {
@@ -65,8 +68,10 @@ interface ImportProgress {
   phase:
     | "inspect"
     | "extract"
+    | "reconcile"
     | "restore"
     | "rewrite"
+    | "verify"
     | "finalize"
     | "done"
     | "error";
@@ -124,6 +129,13 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   protected sectionExtensions = false;
   // Per-extension toggles, keyed by directory name from the manifest.
   protected extensionsByName: Record<string, boolean> = {};
+
+  // Opt-in: overwriting the site's root extend.php replaces live config
+  // of THIS server, so it never happens unless asked for.
+  protected sectionRootExtend = false;
+  // Opt-out: losing this server's SMTP / queue / integration settings to
+  // the source forum's is the defect this whole layer exists to stop.
+  protected preserveSettings = true;
 
   protected status: ImportProgress | null = null;
   protected polling = false;
@@ -571,12 +583,46 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             )}
           </>
         )}
+
+        {(hasDb || manifest.has_root_extend) && (
+          <div className="BackupImport-serverState">
+            <h4>{trans("server_state_title")}</h4>
+            <p className="helpText">{trans("server_state_help")}</p>
+
+            {hasDb &&
+              this.sectionRow(
+                "preserve_settings",
+                this.preserveSettings,
+                (v) => {
+                  this.preserveSettings = v;
+                },
+              )}
+
+            {manifest.has_root_extend &&
+              this.sectionRow("root_extend", this.sectionRootExtend, (v) => {
+                this.sectionRootExtend = v;
+              })}
+
+            {this.sectionRootExtend && (
+              <div className="BackupImport-composerNote helpText">
+                <i className="icon fas fa-triangle-exclamation" />{" "}
+                {trans("root_extend_warning")}
+              </div>
+            )}
+          </div>
+        )}
       </fieldset>
     );
   }
 
   sectionRow(
-    key: "db" | "assets" | "storage" | "extensions",
+    key:
+      | "db"
+      | "assets"
+      | "storage"
+      | "extensions"
+      | "preserve_settings"
+      | "root_extend",
     checked: boolean,
     set: (v: boolean) => void,
     count?: number,
@@ -619,6 +665,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       assets: this.sectionAssets,
       storage: this.sectionStorage,
       extensions: extensionsField,
+      root_extend: this.sectionRootExtend,
+      preserve_settings: this.preserveSettings,
     };
   }
 

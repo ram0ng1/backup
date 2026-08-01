@@ -281,7 +281,7 @@ class ExportJob
      * in; the inventory drives WHERE they live (workbench/ for local
      * dev, vendor/ for composer-managed).
      *
-     * @return array{built: bool, targets: list<array<string, mixed>>, idx: int, files: int, bytes: int, counts: array{asset: int, storage: int, extension: int}, ext_descriptors: list<array<string, mixed>>, has_composer: bool}
+     * @return array{built: bool, targets: list<array<string, mixed>>, idx: int, files: int, bytes: int, counts: array{asset: int, storage: int, extension: int}, ext_descriptors: list<array<string, mixed>>, has_composer: bool, has_root_extend: bool}
      */
     private function buildScanPlan(JobState $state): array
     {
@@ -350,6 +350,7 @@ class ExportJob
             'counts'          => ['asset' => 0, 'storage' => 0, 'extension' => 0],
             'ext_descriptors' => [],
             'has_composer'    => false,
+            'has_root_extend' => false,
         ];
     }
 
@@ -393,13 +394,25 @@ class ExportJob
                 break;
 
             case 'composer':
-                foreach (['composer.json', 'composer.lock'] as $rel) {
+                /*
+                 * O extend.php da raiz viaja junto com o composer.json de
+                 * propósito: é ele que CONSUME as dependências que o
+                 * manifesto declara. Mandar só o manifesto foi o que
+                 * produziu, num restore real, um extend.php apontando para
+                 * uma classe que o composer install seguinte tinha podado —
+                 * fatal no boot, antes de existir handler de erro.
+                 */
+                foreach (['composer.json', 'composer.lock', 'extend.php'] as $rel) {
                     $abs = rtrim($this->appPaths->base, '/\\').DIRECTORY_SEPARATOR.$rel;
                     if (is_file($abs)) {
                         $size = filesize($abs) ?: 0;
                         $files[] = ['name' => 'project/'.$rel, 'absolute' => $abs, 'size' => $size];
                         $bytes += $size;
-                        $scan['has_composer'] = true;
+                        if ($rel === 'extend.php') {
+                            $scan['has_root_extend'] = true;
+                        } else {
+                            $scan['has_composer'] = true;
+                        }
                     }
                 }
                 break;
@@ -465,6 +478,7 @@ class ExportJob
             'extension_count' => (int) $scan['counts']['extension'],
             'extensions'      => $bundledExts,
             'has_composer'    => (bool) $scan['has_composer'],
+            'has_root_extend' => (bool) ($scan['has_root_extend'] ?? false),
         ];
         $state->set('manifest_summary', $summary);
 

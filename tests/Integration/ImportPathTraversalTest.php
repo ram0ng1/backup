@@ -25,6 +25,7 @@ use ReflectionMethod;
 final class ImportPathTraversalTest extends TestCase
 {
     private string $workdir;
+    private string $jobDir;
     private ImportJob $job;
     private ReflectionMethod $resolve;
     private ReflectionMethod $extMap;
@@ -32,9 +33,10 @@ final class ImportPathTraversalTest extends TestCase
     protected function setUp(): void
     {
         $this->workdir = sys_get_temp_dir().DIRECTORY_SEPARATOR.'bkp_pt_'.bin2hex(random_bytes(4));
-        foreach (['', '/public', '/public/assets', '/storage', '/workbench', '/vendor'] as $sub) {
+        foreach (['', '/public', '/public/assets', '/storage', '/workbench', '/vendor', '/jobdir'] as $sub) {
             @mkdir($this->workdir.$sub, 0777, true);
         }
+        $this->jobDir = $this->workdir.DIRECTORY_SEPARATOR.'jobdir';
 
         $paths = new Paths([
             'base'    => $this->workdir,
@@ -51,7 +53,15 @@ final class ImportPathTraversalTest extends TestCase
         // satisfies the (narrowed) Connection type is enough.
         $db = Mockery::mock(Connection::class);
 
-        $this->job = new ImportJob(new StoragePaths($paths), $paths, $db, $cipher, $config);
+        $this->job = new ImportJob(
+            new StoragePaths($paths),
+            $paths,
+            $db,
+            $cipher,
+            $config,
+            new \Ramon\Backup\Project\ProjectReconciler($paths),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+        );
 
         // PHP 8.1+ reflection reaches private methods without
         // setAccessible() (which is a deprecated no-op since 8.5).
@@ -68,6 +78,11 @@ final class ImportPathTraversalTest extends TestCase
     private function state(array $data = []): JobState
     {
         $file = $this->workdir.DIRECTORY_SEPARATOR.'job_'.bin2hex(random_bytes(3)).'.json';
+
+        // `project/*` resolve para um staging dentro do diretório do job,
+        // então o state precisa carregar `paths.dir` como o job real faz.
+        $data['paths'] = $data['paths'] ?? ['dir' => $this->jobDir];
+
         return JobState::create($file, $data);
     }
 
@@ -104,6 +119,33 @@ final class ImportPathTraversalTest extends TestCase
         $this->assertNotNull($this->resolve('assets/avatars/1.png'));
         $this->assertNotNull($this->resolve('storage/uploads/a.txt'));
         $this->assertNotNull($this->resolve('project/composer.json'));
+        $this->assertNotNull($this->resolve('project/extend.php'));
+    }
+
+    /**
+     * Regressão do incidente que motivou o ProjectReconciler: um restore
+     * sobrescreveu o composer.json vivo com o do backup, o composer
+     * install seguinte podou o pacote, e o extend.php da raiz ficou
+     * apontando para uma classe inexistente — fatal antes do handler de
+     * erro. `project/*` nunca mais pode resolver para a raiz do install.
+     */
+    public function test_project_entries_land_in_staging_not_the_install_root(): void
+    {
+        foreach (['composer.json', 'composer.lock', 'extend.php'] as $name) {
+            $resolved = $this->resolve('project/'.$name);
+
+            $this->assertNotNull($resolved, "project/$name should resolve");
+            $this->assertStringStartsWith(
+                $this->jobDir,
+                (string) $resolved,
+                "project/$name must stage inside the job dir"
+            );
+            $this->assertNotSame(
+                $this->workdir.DIRECTORY_SEPARATOR.$name,
+                $resolved,
+                "project/$name must never be written straight to the install root"
+            );
+        }
     }
 
     public function test_extensionDestinationMap_rejects_hostile_relative(): void
