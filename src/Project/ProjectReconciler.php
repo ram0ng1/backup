@@ -341,6 +341,8 @@ class ProjectReconciler
      * Lê o próximo nome de classe a partir de $i, pulando espaços. Só
      * grupos `use A\{B, C}` são ignorados — não aparecem em extend.php
      * real e resolvê-los não pagaria o custo.
+     *
+     * @param array<int, string|array{0: int, 1: string, 2: int}> $tokens
      */
     private function readName(array $tokens, int $i, int $count): string
     {
@@ -357,7 +359,11 @@ class ProjectReconciler
         return '';
     }
 
-    /** Lê o nome imediatamente antes de um `::`. */
+    /**
+     * Lê o nome imediatamente antes de um `::`.
+     *
+     * @param array<int, string|array{0: int, 1: string, 2: int}> $tokens
+     */
     private function readNameBackwards(array $tokens, int $i): string
     {
         for ($j = $i - 1; $j >= 0; $j--) {
@@ -376,6 +382,7 @@ class ProjectReconciler
     /**
      * Preenche o mapa alias → FQCN a partir de um `use A\B\C as D;`.
      *
+     * @param array<int, string|array{0: int, 1: string, 2: int}> $tokens
      * @param array<string, string> $aliases
      */
     private function collectAliases(array $tokens, int $i, int $count, array &$aliases): void
