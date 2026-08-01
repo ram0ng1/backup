@@ -258,8 +258,8 @@ class ProjectReconciler
             return [];
         }
 
-        $source = @file_get_contents($path); /* arquivo local do próprio install; nosemgrep: flarum-v2-server-side-fetch */
-        if ($source === false || $source === '') {
+        $source = $this->readLocalFile($path);
+        if ($source === null || $source === '') {
             return [];
         }
 
@@ -554,11 +554,26 @@ class ProjectReconciler
     /** @return array<string, mixed>|null */
     private function decodeJson(string $path): ?array
     {
-        $raw = @file_get_contents($path); /* arquivo local do próprio install; nosemgrep: flarum-v2-server-side-fetch */
-        if ($raw === false) {
+        $raw = $this->readLocalFile($path);
+        if ($raw === null) {
             return null;
         }
         $decoded = json_decode($raw, true);
         return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * Lê um arquivo local do próprio install: o manifesto da raiz, o
+     * extend.php da raiz, ou o staging deste job.
+     *
+     * O caminho deriva SEMPRE de {@see Paths} ou do diretório do job —
+     * nunca de input de requisição —, então o alerta de SSRF do semgrep
+     * é falso positivo. Concentrar a leitura aqui deixa a supressão num
+     * ponto só, em vez de espalhada por cada chamada.
+     */
+    private function readLocalFile(string $path): ?string
+    {
+        $raw = @file_get_contents($path); /* caminho derivado de Paths, nunca de request; nosemgrep: flarum-v2-server-side-fetch */
+        return $raw === false ? null : $raw;
     }
 }

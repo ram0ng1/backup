@@ -123,12 +123,12 @@ final class ProjectReconcilerTest extends TestCase
         file_put_contents($this->staging.DIRECTORY_SEPARATOR.'extend.php', "<?php\n\nreturn ['from-backup'];\n");
 
         $this->reconciler->reconcile($this->staging, false, false);
-        $this->assertSame($original, file_get_contents($this->base.DIRECTORY_SEPARATOR.'extend.php'));
+        $this->assertSame($original, $this->read($this->base.DIRECTORY_SEPARATOR.'extend.php'));
 
         $this->reconciler->reconcile($this->staging, false, true);
         $this->assertStringContainsString(
             'from-backup',
-            (string) file_get_contents($this->base.DIRECTORY_SEPARATOR.'extend.php')
+            $this->read($this->base.DIRECTORY_SEPARATOR.'extend.php')
         );
         $this->assertNotEmpty(
             glob($this->base.DIRECTORY_SEPARATOR.'extend.php.bak-*'),
@@ -188,8 +188,18 @@ final class ProjectReconcilerTest extends TestCase
     /** @return array<string, mixed> */
     private function readDestManifest(): array
     {
-        $raw = (string) file_get_contents($this->base.DIRECTORY_SEPARATOR.'composer.json');
-        return (array) json_decode($raw, true);
+        return (array) json_decode($this->read($this->base.DIRECTORY_SEPARATOR.'composer.json'), true);
+    }
+
+    /**
+     * Lê uma fixture criada pelo próprio teste. O caminho sai de
+     * `$this->base` / `$this->staging`, nunca de input — o alerta de SSRF
+     * do semgrep é falso positivo e fica suprimido num ponto só.
+     */
+    private function read(string $path): string
+    {
+        $raw = @file_get_contents($path); /* fixture local do teste; nosemgrep: flarum-v2-server-side-fetch */
+        return $raw === false ? '' : $raw;
     }
 
     private function rrmdir(string $dir): void
