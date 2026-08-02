@@ -696,19 +696,46 @@ class ImportJob
 
             $restorer = new DatabaseRestorer($this->db);
             $consumed = 0;
-            while ($consumed < self::BUDGET_BYTES && $offset < $size) {
-                $want = (int) min(Format::CHUNK_SIZE, self::BUDGET_BYTES - $consumed);
-                $chunk = fread($fh, $want);
+            while ($offset < $size) {
+                $chunk = fread($fh, Format::CHUNK_SIZE);
                 if ($chunk === false || $chunk === '') break;
                 $restorer->feed($chunk);
                 $consumed += strlen($chunk);
                 $offset += strlen($chunk);
                 $restorer->executeReady();
+
+                if ($consumed < self::BUDGET_BYTES) {
+                    continue;
+                }
+
+                /*
+                 * Orçamento estourado, mas só dá para encerrar o tick se
+                 * algo rodou nele: o recuo abaixo devolve o cursor ao
+                 * último byte executado, e sem nenhum statement executado
+                 * esse recuo apagaria o tick inteiro — o job leria os
+                 * mesmos bytes para sempre. Um statement maior que o
+                 * orçamento (INSERT de um post gigante) segue sendo lido
+                 * até fechar.
+                 */
+                if ($restorer->statementsRun() > 0) {
+                    break;
+                }
             }
 
-            // If we just hit EOF, drain any final partial.
             if ($offset >= $size) {
                 $restorer->finish();
+            } else {
+                /*
+                 * O cursor só pode avançar até o que REALMENTE rodou. O
+                 * restorer não sobrevive ao tick, então o que sobrou no
+                 * buffer — a cabeça de um statement ainda sem delimitador —
+                 * é relido do zero no próximo tick. Sem este recuo a cabeça
+                 * se perdia e o tick seguinte reabria o dump no meio de um
+                 * literal, mandando a cauda do INSERT sozinha ao banco: é
+                 * exatamente o erro de sintaxe que aparecia em dump grande
+                 * o bastante para cruzar o orçamento (qualquer fórum real).
+                 */
+                $offset -= $restorer->pendingBytes();
             }
 
             $progress['restored_statements'] = $restorer->statementsRun() + (int) $progress['restored_statements'];
