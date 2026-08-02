@@ -168,6 +168,7 @@ class ImportJob
             // para o operador saber O QUE ficou fora sem carregar o
             // state com dezenas de milhares de caminhos.
             'unresolved_sample' => [],
+            'unwritable_sample' => [],
             'progress' => [
                 'total_bytes'        => filesize($upload) ?: 0,
                 'processed_bytes'    => 0,
@@ -179,6 +180,11 @@ class ImportJob
                 // `skipped_entries` porque um valor > 0 aqui é defeito,
                 // não escolha.
                 'unresolved_entries' => 0,
+                // Entradas cujo destino resolveu mas o disco recusou a
+                // escrita (permissão, read-only, disco cheio). Também é
+                // defeito, não escolha — só que do ambiente, não do
+                // arquivo.
+                'unwritable_entries' => 0,
                 'restored_statements' => 0,
                 'percent'            => 0.0,
             ],
@@ -322,6 +328,10 @@ class ImportJob
         $progress = $state->get('progress');
         $cursor   = $state->get('cursor');
 
+        if (($cursor['reader'] ?? null) === null) {
+            $this->preflightWritability($state);
+        }
+
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
             // A persisted reader snapshot means this is a resume tick:
@@ -374,14 +384,11 @@ class ImportJob
                     // or null (drain into the void). We always consume
                     // the bytes — skipping just means not writing them.
                     $sinkFh = null;
+                    $writeError = null;
                     if ($accept && $entry['type'] === Format::TYPE_DB_DUMP) {
                         $sinkFh = $dumpFh;
                     } elseif ($accept && $dest !== null) {
-                        @mkdir(dirname($dest), 0755, true);
-                        $sinkFh = fopen($dest, 'wb');
-                        if ($sinkFh === false) {
-                            throw new RuntimeException('Could not write file: '.$dest);
-                        }
+                        $sinkFh = $this->openDestination($dest, $writeError);
                     }
 
                     try {
@@ -390,9 +397,27 @@ class ImportJob
                             $want = (int) min(Format::CHUNK_SIZE, $remaining);
                             $chunk = $reader->readEntryBytes($want);
                             if ($sinkFh !== null && $sinkFh !== $dumpFh) {
-                                fwrite($sinkFh, $chunk);
+                                $written = @fwrite($sinkFh, $chunk);
+                                if ($written === false || $written < strlen($chunk)) {
+                                    /*
+                                     * Escrita curta em arquivo local é
+                                     * praticamente sempre ENOSPC. Fecha o
+                                     * destino e segue drenando: o resto do
+                                     * arquivo ainda precisa ser lido para o
+                                     * leitor parar numa fronteira de entrada.
+                                     */
+                                    $writeError = $this->lastErrorMessage() ?? 'short write (disco cheio?)';
+                                    fclose($sinkFh);
+                                    $sinkFh = null;
+                                }
                             } elseif ($sinkFh === $dumpFh) {
-                                fwrite($dumpFh, $chunk);
+                                $written = @fwrite($dumpFh, $chunk);
+                                if ($written === false || $written < strlen($chunk)) {
+                                    throw new RuntimeException(
+                                        'Falha ao gravar dump.sql em '.$paths['dump']
+                                        .' — '.($this->lastErrorMessage() ?? 'escrita curta (disco cheio?)')
+                                    );
+                                }
                             }
                             $remaining -= strlen($chunk);
                             $progress['processed_bytes'] += strlen($chunk);
@@ -406,6 +431,9 @@ class ImportJob
                     if ($unresolved) {
                         $progress['unresolved_entries']++;
                         $this->noteUnresolved($state, (string) $entry['name']);
+                    } elseif ($writeError !== null) {
+                        $progress['unwritable_entries']++;
+                        $this->noteUnwritable($state, (string) $dest, $writeError);
                     } elseif ($accept) {
                         $progress['extracted_entries']++;
                     } else {
@@ -943,6 +971,181 @@ class ImportJob
     }
 
     /**
+     * Mesma amostragem limitada do `noteUnresolved`, para os destinos que
+     * resolveram mas o disco recusou. Guarda o motivo do SO junto do
+     * caminho: "Permission denied" e "No space left on device" pedem ações
+     * opostas do operador, e sem o motivo os dois chegavam como a mesma
+     * mensagem opaca.
+     */
+    private function noteUnwritable(JobState $state, string $dest, string $reason): void
+    {
+        $sample = (array) $state->get('unwritable_sample', []);
+        if (count($sample) >= self::UNRESOLVED_SAMPLE_LIMIT) {
+            return;
+        }
+
+        $sample[] = $dest.' — '.$reason;
+        $state->set('unwritable_sample', array_values($sample));
+    }
+
+    /**
+     * Abre o destino para escrita, criando o diretório pai quando falta.
+     * Devolve null — com o motivo do SO em `$reason` — em vez de lançar:
+     * um `vendor/` sem permissão de escrita não pode abortar a restauração
+     * inteira e levar junto o banco, os assets e o storage, que quase sempre
+     * são graváveis. A entrada perdida é contada e vira aviso no fim.
+     *
+     * @param  string|null  $reason  Preenchido com o erro do SO quando falha.
+     * @return resource|null
+     */
+    private function openDestination(string $dest, ?string &$reason)
+    {
+        $dir = dirname($dest);
+        if (! is_dir($dir)) {
+            error_clear_last();
+            if (! @mkdir($dir, 0755, true) && ! is_dir($dir)) {
+                $reason = $this->lastErrorMessage() ?? 'não foi possível criar '.$dir;
+                return null;
+            }
+        }
+
+        error_clear_last();
+        $fh = @fopen($dest, 'wb');
+        if ($fh === false) {
+            $reason = $this->lastErrorMessage() ?? 'fopen recusou o destino';
+            return null;
+        }
+
+        return $fh;
+    }
+
+    /**
+     * Mensagem do último erro do PHP, já sem o prefixo da função que o
+     * gerou (`fopen(/x/y): Failed to open stream: ` → `Permission denied`).
+     */
+    private function lastErrorMessage(): ?string
+    {
+        $msg = error_get_last()['message'] ?? null;
+        if (! is_string($msg) || $msg === '') {
+            return null;
+        }
+
+        $msg = trim(preg_replace('/^\S+\([^)]*\):\s*/', '', $msg) ?? $msg);
+        $msg = trim(preg_replace('/^Failed to open stream:\s*/i', '', $msg) ?? $msg);
+
+        return $msg !== '' ? $msg : null;
+    }
+
+    /**
+     * Confere, antes do primeiro byte gravado, se as raízes que esta
+     * seleção pretende escrever aceitam escrita pelo usuário do PHP. Não
+     * aborta: emite aviso nomeando o caminho e o usuário do processo, que
+     * é a informação que faltava quando o restore morria no meio com o
+     * caminho de um `.gitignore` qualquer.
+     */
+    private function preflightWritability(JobState $state): void
+    {
+        $opts      = (array) $state->get('options');
+        $selection = $opts['selection'] ?? null;
+        $targets   = [];
+
+        if ($selection === null || ! empty($selection['assets'])) {
+            $targets[] = rtrim($this->appPaths->public, '/\\').DIRECTORY_SEPARATOR.'assets';
+        }
+        if ($selection === null || ! empty($selection['storage'])) {
+            $targets[] = rtrim($this->appPaths->storage, '/\\');
+        }
+        if ($selection === null || $this->hasAnyExtensionSelected((array) $selection)) {
+            foreach ($this->extensionDestinationMap($state) as $extId => $path) {
+                if ($selection !== null
+                    && ! $this->isExtensionAllowed('extensions/'.$extId.'/x', $selection['extensions'] ?? null)) {
+                    continue;
+                }
+                $targets[] = $path;
+            }
+        }
+
+        $blocked = [];
+        foreach (array_unique($targets) as $target) {
+            $anchor = $this->nearestExistingAncestor($target);
+            if ($anchor !== null && ! is_writable($anchor)) {
+                $blocked[$anchor] = true;
+            }
+        }
+
+        if ($blocked === []) {
+            return;
+        }
+
+        $paths = array_slice(array_keys($blocked), 0, 5);
+        $this->addWarning($state, sprintf(
+            'Sem permissão de escrita em %s (o PHP roda como `%s`). As entradas '
+            .'destinadas a esses caminhos NÃO serão gravadas — o banco, os assets e o '
+            .'storage continuam. Ajuste o dono/permissão desses diretórios e restaure '
+            .'de novo, ou desmarque Extensões e instale os pacotes pelo composer.',
+            implode(', ', $paths),
+            $this->processUser()
+        ));
+    }
+
+    /**
+     * Sobe do caminho até o primeiro diretório que já existe. É nele que a
+     * permissão importa: o destino final costuma ser justamente o que ainda
+     * precisa ser criado.
+     */
+    private function nearestExistingAncestor(string $path): ?string
+    {
+        $current = rtrim($path, '/\\');
+        for ($i = 0; $i < 64; $i++) {
+            if ($current === '') {
+                return null;
+            }
+            if (is_dir($current)) {
+                return $current;
+            }
+            $parent = dirname($current);
+            if ($parent === $current) {
+                return null;
+            }
+            $current = $parent;
+        }
+
+        return null;
+    }
+
+    /**
+     * Nome do usuário do processo PHP, para o aviso de permissão apontar o
+     * dono que o diretório precisa aceitar.
+     */
+    private function processUser(): string
+    {
+        if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+            $info = @posix_getpwuid(posix_geteuid());
+            if (is_array($info) && $info['name'] !== '') {
+                return $info['name'];
+            }
+        }
+
+        $user = get_current_user();
+
+        return $user !== '' ? $user : 'desconhecido';
+    }
+
+    /**
+     * Acrescenta um aviso ao state sem duplicar o que já está lá.
+     */
+    private function addWarning(JobState $state, string $message): void
+    {
+        $warnings = (array) $state->get('warnings', []);
+        $warnings[] = $message;
+        $state->set('warnings', array_values(array_unique(array_map(
+            fn ($w) => (string) $w,
+            $warnings
+        ))));
+        $state->save();
+    }
+
+    /**
      * Fecha o job. Uma restauração que perdeu entradas termina em
      * `done` — os dados já estão no disco, abortar aqui não desfaz
      * nada — mas NUNCA com a mensagem de sucesso liso: o contador de
@@ -959,6 +1162,7 @@ class ImportJob
 
         $progress   = (array) $state->get('progress');
         $unresolved = (int) ($progress['unresolved_entries'] ?? 0);
+        $unwritable = (int) ($progress['unwritable_entries'] ?? 0);
         $dangling   = (array) $state->get('boot_dangling_classes', []);
         $warnings   = (array) $state->get('warnings', []);
 
@@ -977,6 +1181,22 @@ class ImportJob
             );
         }
 
+        if ($unwritable > 0) {
+            $sample = array_map(
+                fn ($n) => (string) $n,
+                array_slice(array_values((array) $state->get('unwritable_sample', [])), 0, 5)
+            );
+            $warnings[] = sprintf(
+                'Restauração INCOMPLETA: %d arquivo(s) não pôde(ram) ser gravado(s) pelo '
+                .'usuário `%s` do PHP%s. Corrija dono/permissão (ou espaço em disco) desses '
+                .'caminhos e restaure de novo — o banco de dados já foi aplicado, então '
+                .'basta repetir o restore com apenas Extensões marcado.',
+                $unwritable,
+                $this->processUser(),
+                $sample === [] ? '' : ' — por exemplo: '.implode('; ', $sample)
+            );
+        }
+
         $state->set('warnings', array_values(array_unique(array_map(
             fn ($w) => (string) $w,
             $warnings
@@ -988,10 +1208,11 @@ class ImportJob
          * o operador precisa agir antes de recarregar, e nos dois a tela
          * de sucesso limpo seria mentira.
          */
-        $state->set('incomplete', $unresolved > 0 || $dangling !== []);
+        $state->set('incomplete', $unresolved > 0 || $unwritable > 0 || $dangling !== []);
         $state->set('phase', 'done');
         $state->set('message', match (true) {
             $dangling !== [] => 'Restore finished — the root extend.php references classes that are not installed.',
+            $unwritable > 0  => sprintf('Restore finished — %d file(s) could not be written to disk.', $unwritable),
             $unresolved > 0  => sprintf('Restore finished with %d unrestored entr%s.', $unresolved, $unresolved === 1 ? 'y' : 'ies'),
             default          => 'Restore complete.',
         });

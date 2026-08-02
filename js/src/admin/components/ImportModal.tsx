@@ -82,6 +82,7 @@ interface ImportProgress {
     extracted_entries: number;
     skipped_entries?: number;
     unresolved_entries?: number;
+    unwritable_entries?: number;
     restored_statements: number;
     percent: number;
   };
