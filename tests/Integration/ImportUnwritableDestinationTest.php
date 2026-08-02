@@ -109,7 +109,7 @@ final class ImportUnwritableDestinationTest extends TestCase
         $this->assertNull($reason);
         fwrite($fh, "/vendor\n");
         fclose($fh);
-        $this->assertSame("/vendor\n", file_get_contents($dest));
+        $this->assertStringEqualsFile($dest, "/vendor\n");
     }
 
     public function test_nearestExistingAncestor_walks_up_to_the_first_real_directory(): void
