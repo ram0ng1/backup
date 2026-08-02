@@ -1097,7 +1097,7 @@ class ImportJob
     {
         $current = rtrim($path, '/\\');
         for ($i = 0; $i < 64; $i++) {
-            if ($current === '' || $current === false) {
+            if ($current === '') {
                 return null;
             }
             if (is_dir($current)) {
@@ -1121,8 +1121,8 @@ class ImportJob
     {
         if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
             $info = @posix_getpwuid(posix_geteuid());
-            if (is_array($info) && isset($info['name']) && $info['name'] !== '') {
-                return (string) $info['name'];
+            if (is_array($info) && $info['name'] !== '') {
+                return $info['name'];
             }
         }
 
