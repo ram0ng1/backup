@@ -11,7 +11,17 @@ use Throwable;
  * Resumable across ticks via a "buffer + cursor" model: the caller
  * pumps SQL bytes in via `feed()` and calls `executeReady()` to flush
  * whatever complete statements are already terminated. Anything past
- * the last `STATEMENT_DELIMITER` is held back for the next tick.
+ * the last `STATEMENT_DELIMITER` is held back in the buffer.
+ *
+ * CONTRATO COM O CHAMADOR: a instância NÃO sobrevive ao tick — cada tick
+ * constrói um restorer novo, de buffer vazio. Logo, o cursor que o
+ * chamador persiste jamais pode passar do último byte executado. É para
+ * isso que existe {@see pendingBytes()}: ou o tick só termina com ele
+ * zerado (fronteira de statement), ou o cursor recua essa mesma
+ * quantidade antes de ser salvo. Avançar o cursor por cima do buffer
+ * descarta a cabeça de um statement e faz o tick seguinte reabrir o dump
+ * no meio de um literal — o rabo do INSERT chega sozinho ao banco e volta
+ * como erro de sintaxe.
  *
  * The restorer is engine-aware: it detects the destination's dialect
  * and uses the right "disable FK enforcement" toggle for the duration
@@ -94,6 +104,17 @@ class DatabaseRestorer
     public function statementsRun(): int
     {
         return $this->statementsRun;
+    }
+
+    /**
+     * Bytes ainda no buffer — a cauda depois do último delimitador, que
+     * `executeReady()` segurou por não estar terminada. Zero significa que
+     * o stream parou exatamente numa fronteira de statement, que é a única
+     * posição em que o chamador pode persistir seu cursor.
+     */
+    public function pendingBytes(): int
+    {
+        return strlen($this->buffer);
     }
 
     /**
