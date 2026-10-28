@@ -653,16 +653,17 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   /**
-   * Avisos de uma restauração que terminou com entradas perdidas ou com
-   * alerta de stack. Restauração incompleta nunca aparece como sucesso.
+   * Avisos do fim da restauração. Incompleta sai em vermelho e nunca como
+   * sucesso; completa com avisos (stack, composer) sai em amarelo.
    */
   completedWarnings() {
     const warnings = this.status?.warnings ?? [];
     if (!warnings.length) return null;
+    const incomplete = !!this.status?.incomplete;
 
     return (
-      <div className="Alert Alert--error BackupImport-completedWarnings">
-        <strong>{trans('incomplete_title')}</strong>
+      <div className={`Alert Alert--${incomplete ? 'error' : 'warning'} BackupImport-completedWarnings`}>
+        <strong>{trans(incomplete ? 'incomplete_title' : 'notes_title')}</strong>
         <ul>
           {warnings.map((w) => (
             <li>{w}</li>
