@@ -30,6 +30,7 @@ use Ramon\Backup\Api\Controller\UploadImportController;
 use Ramon\Backup\Console\ExportCommand;
 use Ramon\Backup\Console\ImportCommand;
 use Ramon\Backup\Console\PruneStaleJobsCommand;
+use Ramon\Backup\Console\PruneStaleJobsSchedule;
 use Ramon\Backup\Settings\SettingsPreserver;
 
 return [
@@ -47,9 +48,7 @@ return [
         // a failed job doesn't leave a plaintext dump.sql sitting under
         // storage/backup-tmp forever. Requires the operator's cron to run
         // `php flarum schedule:run`; the command is also runnable by hand.
-        ->schedule(PruneStaleJobsCommand::class, function (\Illuminate\Console\Scheduling\Event $event) {
-            $event->daily();
-        }),
+        ->schedule(PruneStaleJobsCommand::class, PruneStaleJobsSchedule::class),
 
     (new Extend\Settings())
         // Public encryption key (base64). Empty string means encryption is off.
