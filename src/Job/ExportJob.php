@@ -689,8 +689,9 @@ class ExportJob
                     $entry = $manifest[$cursor['file_idx']];
                     $abs   = $entry['absolute'];
                     $size  = $entry['size'];
+                    $headerWritten = $cursor['file_offset'] > 0;
 
-                    if (! is_file($abs)) {
+                    if (! $headerWritten && ! is_file($abs)) {
                         // File vanished mid-export. Skip it so the rest
                         // of the bundle can still complete.
                         $cursor['file_idx']++;
@@ -699,7 +700,7 @@ class ExportJob
                         continue;
                     }
 
-                    if ($cursor['file_offset'] === 0) {
+                    if (! $headerWritten) {
                         $writer->beginEntry($entry['name'], Format::TYPE_FILE, $size);
                     }
 
@@ -711,16 +712,22 @@ class ExportJob
                         continue;
                     }
 
-                    $written = $this->streamRange($abs, $cursor['file_offset'], min($remaining, $budgetLeft), $writer);
+                    $want = (int) min($remaining, $budgetLeft);
+                    $written = is_file($abs) ? $this->streamRange($abs, $cursor['file_offset'], $want, $writer) : 0;
+                    if ($written === 0) {
+                        /*
+                         * O cabeçalho já declarou o tamanho do scan e o
+                         * leitor confia nele: um arquivo que encolheu ou
+                         * sumiu no meio (log girando, sessão regravada) tem
+                         * o resto completado com zeros. Pular desalinhava o
+                         * arquivo inteiro a partir daqui.
+                         */
+                        $written = $this->padEntry($writer, $want);
+                        $this->noteChangedFile($state, $entry['name']);
+                    }
                     $cursor['file_offset'] += $written;
                     $progress['processed_bytes'] += $written;
                     $budgetLeft -= $written;
-                    if ($written === 0) {
-                        // Avoid an infinite loop if the file is unreadable.
-                        $cursor['file_idx']++;
-                        $cursor['file_offset'] = 0;
-                        $progress['processed_files']++;
-                    }
                     continue;
                 }
 
@@ -885,6 +892,26 @@ class ExportJob
         } finally {
             fclose($fh);
         }
+    }
+
+    /** Grava `$bytes` zeros na entrada corrente, em pedaços de CHUNK_SIZE. */
+    private function padEntry(ArchiveWriter $writer, int $bytes): int
+    {
+        $left = $bytes;
+        while ($left > 0) {
+            $piece = (int) min(Format::CHUNK_SIZE, $left);
+            $writer->appendEntryBytes(str_repeat("\0", $piece));
+            $left -= $piece;
+        }
+
+        return $bytes;
+    }
+
+    private function noteChangedFile(JobState $state, string $name): void
+    {
+        $warnings = (array) $state->get('db_warnings', []);
+        $warnings[] = sprintf('%s changed while the backup was running; the missing bytes were filled with zeros.', $name);
+        $state->set('db_warnings', array_values(array_unique(array_map('strval', $warnings))));
     }
 
     /**
