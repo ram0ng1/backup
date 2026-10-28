@@ -21,16 +21,10 @@ use Ramon\Backup\Crypto\BackupCipher;
 /**
  * POST /api/backup/encryption/generate-keypair
  *
- * Same UX shape as the verified extension's generator: the new public
- * key is persisted in settings, the private half is returned ONCE so
- * the admin can paste it into config.php manually. Subsequent calls
- * never re-emit the private key — losing it means losing the ability
- * to decrypt previously-created backups.
- *
- * Backups are NOT erased on rotation. Encryption here protects the
- * archive contents, but the archive files themselves are still useful
- * to download and decrypt out-of-band, even after a key change. The
- * admin is told this clearly in the modal.
+ * Grava a chave pública nas settings e devolve a privada uma única vez,
+ * para o admin colar no config.php. Perdê-la é perder os backups cifrados.
+ * Trocar o par não apaga backups antigos: ainda dá para baixá-los e
+ * decifrá-los fora daqui com a chave anterior.
  */
 class GenerateKeypairController implements RequestHandlerInterface
 {

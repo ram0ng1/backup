@@ -19,10 +19,8 @@ use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
 
 /**
- * Admin deletes a saved backup. Removes both the row and the file on
- * disk; if the file is already gone we just delete the row, since a
- * dangling row is the only thing that would surface the missing file
- * in the UI.
+ * Apaga o backup e o arquivo em disco. Se o arquivo já sumiu, apaga só a
+ * linha, que de outro modo ficaria órfã na lista.
  */
 class DeleteBackupController implements RequestHandlerInterface
 {

@@ -13,11 +13,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Schema\Builder;
 
 /**
- * Records which database engine each backup was generated FOR. NULL
- * means "same as source" (a regular backup of this install). A value
- * like "postgres" means the SQL dump was translated for that target,
- * so the admin sees a clear flag in the list and isn't surprised to
- * find their MySQL backup file is full of PG-flavoured DDL.
+ * Banco para o qual o dump foi gerado. NULL é o mesmo da origem; "postgres",
+ * por exemplo, indica um dump traduzido, sinalizado na lista de backups.
  */
 return [
     'up' => function (Builder $schema) {

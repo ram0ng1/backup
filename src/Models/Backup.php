@@ -32,10 +32,7 @@ class Backup extends AbstractModel
 {
     protected $table = 'backups';
 
-    // Flarum's AbstractModel disables Eloquent timestamps by default;
-    // re-enable here so created_at / updated_at are auto-managed and
-    // the admin list can sort + display "when" without us threading
-    // now() through every save site.
+    // O AbstractModel do Flarum desliga os timestamps do Eloquent.
     public $timestamps = true;
 
     protected $casts = [

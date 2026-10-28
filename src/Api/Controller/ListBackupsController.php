@@ -18,9 +18,8 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Models\Backup;
 
 /**
- * Returns every saved backup, newest first. Cheap query — the admin UI
- * shows them all on one screen rather than paginating, since the row
- * count is bounded by how often anyone clicks "create backup".
+ * Backups salvos, mais recentes primeiro. Sem paginação: são poucos e o
+ * painel mostra todos numa tela.
  */
 class ListBackupsController implements RequestHandlerInterface
 {

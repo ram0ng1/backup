@@ -21,8 +21,7 @@ use Ramon\Backup\StoragePaths;
 /**
  * DELETE /api/backup/imports/{id}
  *
- * Wipes the staged upload + tmp dir. Safe to call from the UI even if
- * the job has already finished — we just nuke whatever is there.
+ * Apaga o upload e o staging; pode ser chamado mesmo com o job já encerrado.
  */
 class CancelImportController implements RequestHandlerInterface
 {

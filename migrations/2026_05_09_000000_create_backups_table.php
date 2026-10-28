@@ -23,8 +23,7 @@ return [
             $table->string('filename', 255);
             $table->unsignedBigInteger('size_bytes')->default(0);
             $table->boolean('encrypted')->default(false);
-            // Comma-separated list of what was bundled: "db,assets,storage,extensions".
-            // Keeps reporting cheap without joining a sub-table.
+            // O que foi incluído, separado por vírgula: "db,assets,storage,extensions".
             $table->string('contents', 64)->default('');
             $table->string('flarum_version', 32)->nullable();
             $table->string('php_version', 32)->nullable();

@@ -28,39 +28,12 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Mirror of ExportJob, but reversed: pull entries from a `.flarum`
- * archive and apply them to the running install.
- *
- * Strategy is "replace" for o conteúdo do fórum e "reconcilia" para o
- * que descreve o servidor:
- *   - DB statements include `DROP TABLE IF EXISTS` per table — running
- *     them recreates the schema cleanly.
- *   - File entries overwrite anything currently at the destination
- *     path. We never touch paths outside the four bundleable roots
- *     (assets/, storage/, extensions/), so a malicious archive can't
- *     escape the install.
- *   - `project/*` (composer.json, composer.lock, extend.php da raiz) NÃO
- *     é gravado direto: vai para um staging dentro do job e passa pelo
- *     {@see ProjectReconciler}, que faz merge em vez de overwrite. Um
- *     manifesto de outro servidor sobrescrito é o que já derrubou um
- *     fórum inteiro — poda o pacote, o extend.php fica apontando para a
- *     classe podada, e o boot morre antes do handler de erro.
- *   - As chaves de `settings` que descrevem ESTE servidor (SMTP, fila,
- *     tokens) são fotografadas antes do restore e regravadas depois —
- *     ver {@see SettingsPreserver}.
- *
- * Phases:
- *   inspect   → openHeader + decrypt prep (one tick)
- *   extract   → pull each entry; SQL goes into dump.sql, files go to
- *               their destination directly, `project/*` vai para staging
- *   reconcile → merge do composer.json, extend.php opcional, snapshot
- *               das settings preservadas
- *   restore   → replay dump.sql through DatabaseRestorer
- *   rewrite   → troca a URL de origem pela do destino e regrava as
- *               settings preservadas
- *   verify    → procura classe referenciada pelo extend.php da raiz que
- *               o autoloader não resolve (o modo de falha silencioso)
- *   finalize  → cleanup
+ * Inverso do ExportJob: aplica um `.flarum` na instalação em execução, nas
+ * fases inspect → extract → reconcile → restore → rewrite → verify →
+ * finalize. Conteúdo do fórum é substituído; arquivos só caem em assets/,
+ * storage/ e extensões. O que descreve ESTE servidor é reconciliado:
+ * `project/*` passa pelo {@see ProjectReconciler} (merge, não overwrite) e
+ * as settings de infraestrutura são preservadas pelo {@see SettingsPreserver}.
  */
 class ImportJob
 {
@@ -73,33 +46,22 @@ class ImportJob
     public const PROJECT_STAGING_DIR = 'project';
 
     /**
-     * Arquivo do snapshot de settings preservadas. Fica fora do job.json
-     * porque carrega segredo do destino (senha de SMTP, token OAuth) e o
-     * job.json é reescrito a cada tick. Mesma exposição do dump.sql, que
-     * já vive neste diretório 0700 e é apagado no finalize.
+     * Fora do job.json porque carrega segredo do destino (senha de SMTP,
+     * token OAuth). Fica no diretório 0700 do job, como o dump.sql.
      */
     public const PRESERVED_SETTINGS_FILE = 'preserved-settings.json';
 
     /**
-     * Decryption private key for the current run. Held ONLY in memory
-     * and NEVER written to the job-state file: persisting a user-pasted
-     * private key in plaintext under storage/ would let any process that
-     * can read that directory steal it (and with it every past encrypted
-     * backup). The CLI keeps the same job instance across all ticks, so
-     * setting it once in start() is enough; the web flow re-supplies it
-     * on each tick request (over HTTPS) and TickImportController calls
-     * withPrivateKey() before runTick().
+     * Chave privada só em memória, nunca no job.json: em disco ela abriria
+     * todos os backups cifrados. A CLI reusa a instância entre ticks; na web
+     * o TickImportController reenvia a chave a cada tick.
      */
     private ?string $privateKey = null;
 
     /**
-     * The live database connection. Declared as the concrete
-     * {@see Connection} because the dump/restore path needs
-     * `getDriverName()` (via {@see Dialect::detect}), which the broader
-     * {@see ConnectionInterface} does not expose. The constructor takes
-     * the interface so Flarum's container (which binds
-     * `ConnectionInterface`, not the concrete class) can still inject it,
-     * then narrows once at this boundary.
+     * Tipo concreto porque o restore precisa de `getDriverName()`, que a
+     * interface não expõe. O construtor recebe a interface (é o que o
+     * container do Flarum injeta) e estreita aqui.
      */
     protected Connection $db;
 
@@ -118,10 +80,7 @@ class ImportJob
         $this->db = $db;
     }
 
-    /**
-     * Provide (or refresh) the in-memory decryption key for the next
-     * tick. A null/empty value clears it. Returns $this for chaining.
-     */
+    /** Null ou vazio limpa a chave. */
     public function withPrivateKey(?string $privateKey): self
     {
         $this->privateKey = ($privateKey !== null && $privateKey !== '') ? $privateKey : null;
@@ -129,16 +88,12 @@ class ImportJob
     }
 
     /**
-     * Begin an import. The archive must already be staged in the job
-     * dir as `upload.flarum` (the upload controller does that).
-     */
-    /**
+     * O arquivo já precisa estar no job como `upload.flarum`.
+     *
      * @param array{db?: bool, assets?: bool, storage?: bool, extensions?: bool|list<string>, root_extend?: bool, preserve_settings?: bool}|null $selection
-     *        null = restore everything in the archive
-     *        extensions: true = all, false = none, array = specific extension dirs
-     *        root_extend: sobrescrever o extend.php da raiz (opt-in)
-     *        preserve_settings: manter as settings de infraestrutura deste
-     *                           servidor por cima do restore (opt-out)
+     *        null = restaura tudo; extensions: true, false ou lista;
+     *        root_extend: sobrescreve o extend.php da raiz (opt-in);
+     *        preserve_settings: mantém as settings deste servidor (opt-out)
      */
     public function start(string $jobId, ?string $privateKey, bool $confirmReplace, ?array $selection, ?int $userId): JobState
     {
@@ -146,9 +101,6 @@ class ImportJob
             throw new RuntimeException('Import requires explicit replace-confirmation.');
         }
 
-        // Hold the decryption key in memory only — see the $privateKey
-        // property docblock. The CLI reuses this instance for every
-        // tick; the web flow re-sends the key per tick.
         $this->withPrivateKey($privateKey);
 
         $dir = $this->paths->importJobDir($jobId);
@@ -169,16 +121,13 @@ class ImportJob
                 'dump'    => $dir.DIRECTORY_SEPARATOR.'dump.sql',
             ],
             'options' => [
-                // NB: the decryption private key is deliberately NOT
-                // stored here — it lives only in memory ($this->privateKey).
+                // A chave privada não entra aqui de propósito.
                 'confirm_replace'  => true,
                 'selection'        => $this->normaliseSelection($selection),
             ],
             'archive_meta'  => null,
             'warnings'      => [],
-            // Amostra limitada dos nomes que não resolveram destino,
-            // para o operador saber O QUE ficou fora sem carregar o
-            // state com dezenas de milhares de caminhos.
+            // Amostras limitadas, para não inflar o estado.
             'unresolved_sample' => [],
             'unwritable_sample' => [],
             'progress' => [
@@ -187,15 +136,9 @@ class ImportJob
                 'extracted_entries'  => 0,
                 // Entradas que o arquivo trazia e o operador desmarcou.
                 'skipped_entries'    => 0,
-                // Entradas aceitas na seleção cujo destino não pôde ser
-                // resolvido — restauração INCOMPLETA. Separado de
-                // `skipped_entries` porque um valor > 0 aqui é defeito,
-                // não escolha.
+                // Selecionadas mas sem destino resolvível: defeito, não escolha.
                 'unresolved_entries' => 0,
-                // Entradas cujo destino resolveu mas o disco recusou a
-                // escrita (permissão, read-only, disco cheio). Também é
-                // defeito, não escolha — só que do ambiente, não do
-                // arquivo.
+                // Destino resolvido mas o disco recusou (permissão, disco cheio).
                 'unwritable_entries' => 0,
                 'restored_statements' => 0,
                 'percent'            => 0.0,
@@ -203,15 +146,12 @@ class ImportJob
             'cursor' => [
                 'bytes_read'        => 0,
                 'restore_offset'    => 0,
-                // Entrada que o tick anterior deixou pela metade, e o
-                // tamanho do dump.sql que ele confirmou.
+                // Entrada deixada pela metade e tamanho confirmado do dump.sql.
                 'current_entry'     => null,
                 'dump_bytes'        => 0,
                 'extract_done'      => false,
-                // Persisted reader position (file offset + secretstream
-                // pull state) so each extract tick resumes in place
-                // instead of re-decrypting earlier entries. Null until
-                // the first extract tick records it.
+                // Posição do leitor (offset + estado do secretstream) para
+                // retomar sem decifrar de novo; null até o primeiro tick.
                 'reader'            => null,
             ],
         ];
@@ -259,14 +199,8 @@ class ImportJob
     }
 
     /**
-     * Phase 1 — read header, validate, and (for encrypted archives)
-     * unwrap the symmetric key. We then close the reader and the
-     * extract phase reopens it from scratch — re-reading the header is
-     * cheap (~few hundred bytes).
-     *
-     * Validation here means: it's a real archive, we can decrypt it.
-     * If something is wrong, the user gets a clear error before any
-     * data is touched.
+     * Valida o arquivo e a chave antes de tocar em qualquer dado, para o
+     * erro aparecer cedo e claro.
      */
     private function runInspect(JobState $state): void
     {
@@ -280,14 +214,10 @@ class ImportJob
             $meta = $reader->meta();
             $state->set('archive_meta', $meta);
 
-            // Stack guard — FIRST check, before the engine guard and
-            // before a single byte is written. A backup taken on a
-            // newer PHP cannot be replayed onto an older one: the
-            // restored vendor/ tree and composer.lock were resolved
-            // for the source's version. Unconditional (not gated on
-            // the file selection) because a DB-only restore also
-            // rewrites `extensions_enabled`, re-enabling extensions
-            // this PHP cannot parse.
+            // Antes de tudo: backup de PHP mais novo não roda num mais
+            // antigo (vendor/ e composer.lock foram resolvidos para ele).
+            // Vale até para restore só de banco, que reativa extensões via
+            // `extensions_enabled`.
             $blocking = StackSnapshot::blockingReason($meta);
             if ($blocking !== null) {
                 throw new RuntimeException($blocking);
@@ -301,11 +231,8 @@ class ImportJob
                 ))));
             }
 
-            // Cross-engine guard: archives from format_version >= 2
-            // record which engine the SQL was generated for. If that
-            // disagrees with the live destination engine, abort early
-            // with a clear error rather than letting the restore fail
-            // mid-stream with a cryptic SQL syntax message.
+            // Dump gerado para outro banco falharia no meio com erro de
+            // sintaxe obscuro; MySQL e MariaDB são intercambiáveis.
             if (! empty($opts['db'] ?? true)) {
                 $target = (string) ($meta['target_dialect'] ?? '');
                 if ($target !== '') {
@@ -322,7 +249,7 @@ class ImportJob
                         }
                     } catch (RuntimeException $e) {
                         throw $e;
-                    } catch (Throwable) { /* dialect detection failed — let the restore try */ }
+                    } catch (Throwable) { /* detecção falhou: deixa o restore tentar */ }
                 }
             }
         } finally {
@@ -335,18 +262,9 @@ class ImportJob
     }
 
     /**
-     * Phase 2 — pull entries one at a time. SQL goes into a single
-     * dump.sql in the job dir; file entries are written straight to
-     * their destination paths.
-     *
-     * Resume strategy: each tick stops on an entry boundary and persists
-     * the reader's exact position — file offset, the libsodium
-     * secretstream pull state, and any leftover decrypted bytes (see
-     * ArchiveReader::serializeState). The next tick reopens the archive
-     * and `resumeState()`s straight to that point, so earlier entries are
-     * read (and, for encrypted archives, DECRYPTED) exactly once across
-     * the whole import — not re-decrypted from byte 0 on every tick. That
-     * keeps a large encrypted restore linear instead of O(n²).
+     * SQL vai para o dump.sql do job; arquivos vão direto ao destino. Cada
+     * tick salva a posição exata do leitor (offset, estado do secretstream,
+     * sobra decifrada), então cada byte é decifrado uma vez só: O(n), não O(n²).
      */
     private function runExtract(JobState $state): void
     {
@@ -361,10 +279,7 @@ class ImportJob
 
         $reader = ArchiveReader::openHeader($paths['archive']);
         try {
-            // A persisted reader snapshot means this is a resume tick:
-            // jump straight to where we stopped. Its absence means this
-            // is the first extract tick, so prime decryption from the
-            // archive header instead.
+            // Com snapshot, retoma; sem, é o primeiro tick e decifra do cabeçalho.
             $snap = $cursor['reader'] ?? null;
             if ($snap !== null) {
                 $reader->resumeState([
@@ -383,9 +298,8 @@ class ImportJob
             $budget = self::BUDGET_BYTES;
 
             /*
-             * O dump.sql volta ao tamanho registrado no último tick salvo:
-             * um tick que morreu no meio (timeout) e roda de novo regravaria
-             * os mesmos bytes no fim do arquivo.
+             * Volta o dump.sql ao tamanho do último tick salvo: um tick que
+             * morreu por timeout e roda de novo duplicaria os bytes.
              */
             $dumpFh = fopen($paths['dump'], 'cb');
             if ($dumpFh === false) {
@@ -419,19 +333,15 @@ class ImportJob
                             'remaining'   => $entry['length'],
                             'accept'      => $accept,
                             'dest'        => $dest,
-                            // Aceita na seleção mas sem destino resolvível (id
-                            // de extensão fora do mapa do manifesto, raiz não
-                            // permitida). Os bytes são drenados igual, mas isso
-                            // é perda de dado — nunca pode passar por "extraído".
+                            // Selecionada sem destino: os bytes são drenados, mas
+                            // é perda de dado e não pode contar como extraída.
                             'unresolved'  => $accept && $entry['type'] === Format::TYPE_FILE && $dest === null,
                             'write_error' => null,
                         ];
                     }
 
-                    // Open a sink: SQL dump file, target file on disk,
-                    // or null (drain into the void). We always consume
-                    // the bytes — skipping just means not writing them.
-                    // Uma entrada retomada continua o arquivo em append.
+                    // Os bytes são sempre consumidos; pular só não grava.
+                    // Entrada retomada continua em append.
                     $sinkFh = null;
                     $writeError = $current['write_error'];
                     if ($current['accept'] && $current['type'] === Format::TYPE_DB_DUMP) {
@@ -448,11 +358,9 @@ class ImportJob
                                 $written = @fwrite($sinkFh, $chunk);
                                 if ($written === false || $written < strlen($chunk)) {
                                     /*
-                                     * Escrita curta em arquivo local é
-                                     * praticamente sempre ENOSPC. Fecha o
-                                     * destino e segue drenando: o resto do
-                                     * arquivo ainda precisa ser lido para o
-                                     * leitor parar numa fronteira de entrada.
+                                     * Escrita curta aqui é quase sempre
+                                     * ENOSPC. Segue drenando para o leitor
+                                     * parar numa fronteira de entrada.
                                      */
                                     $writeError = $this->lastErrorMessage() ?? 'short write (disco cheio?)';
                                     fclose($sinkFh);
@@ -505,11 +413,6 @@ class ImportJob
                 fclose($dumpFh);
             }
 
-            // Persist the reader's exact stop position (file offset +
-            // secretstream pull state + any leftover decrypted bytes) so
-            // the next tick resumes here. This is what keeps the whole
-            // extract O(n) instead of re-decrypting earlier entries on
-            // every tick.
             $snap = $reader->serializeState();
             $cursor['reader'] = [
                 'fpos'             => $snap['fpos'],
@@ -536,8 +439,8 @@ class ImportJob
 
         if ($cursor['extract_done']) {
             /*
-             * A reconciliação roda SEMPRE, inclusive num restore só de
-             * banco: é ela que compara os manifestos e avisa o que falta.
+             * Roda sempre, até em restore só de banco: é ela que compara os
+             * manifestos e avisa o que falta.
              */
             $state->set('phase', 'reconcile');
         }
@@ -546,14 +449,9 @@ class ImportJob
     }
 
     /**
-     * Phase 3 — reconcilia o que descreve o servidor, antes de o banco
-     * ser tocado.
-     *
-     * Duas responsabilidades, ambas com a mesma justificativa: o backup
-     * descreve o fórum de ORIGEM, e há estado que pertence ao destino.
-     * Aqui o composer.json é unido (nunca sobrescrito), o extend.php da
-     * raiz só é aplicado sob opt-in, e as settings de infraestrutura do
-     * destino são fotografadas enquanto a tabela ainda é a dele.
+     * Antes de tocar no banco: une o composer.json (nunca sobrescreve),
+     * aplica o extend.php da raiz só sob opt-in e fotografa as settings do
+     * destino enquanto a tabela ainda é dele.
      */
     private function runReconcile(JobState $state): void
     {
@@ -586,9 +484,7 @@ class ImportJob
     }
 
     /**
-     * Fotografa as settings preservadas num arquivo próprio do job. Roda
-     * antes do DROP/CREATE; sem dump de banco não há nada a preservar,
-     * porque a tabela não vai ser tocada.
+     * Sem dump de banco não há o que preservar: a tabela não será tocada.
      *
      * @param array<string, mixed>|null $selection
      */
@@ -626,8 +522,7 @@ class ImportJob
     }
 
     /**
-     * Regrava o snapshot depois do restore E depois do rewrite de URL,
-     * para ter a última palavra sobre qualquer chave que os dois toquem.
+     * Roda depois do restore e do rewrite de URL, para ter a última palavra.
      */
     private function reapplyPreservedSettings(JobState $state): void
     {
@@ -656,8 +551,7 @@ class ImportJob
             return;
         }
 
-        // Só apaga a cópia quando tudo voltou: com a tabela settings fora
-        // do ar (restore que parou antes de recriá-la) ela é a única que sobra.
+        // Só apaga quando tudo voltou: se a tabela settings sumiu, é a única cópia.
         if (count($restored) === count($snapshot)) {
             @unlink($file);
         }
@@ -683,11 +577,7 @@ class ImportJob
             .DIRECTORY_SEPARATOR.self::PROJECT_STAGING_DIR;
     }
 
-    /**
-     * Mesmo caminho, garantindo o diretório. 0700 pelo mesmo motivo do
-     * resto do job: o staging guarda o composer.json e o extend.php da
-     * origem enquanto esperam a reconciliação.
-     */
+    /** Cria o staging com 0700, como o resto do job. */
     private function projectStagingDir(JobState $state): string
     {
         $dir = $this->projectStagingPath($state);
@@ -705,9 +595,6 @@ class ImportJob
     }
 
     /**
-     * Acrescenta avisos sem duplicar. O finalize também mexe nessa
-     * lista, então a deduplicação tem que valer para os dois.
-     *
      * @param list<string> $new
      */
     private function addWarnings(JobState $state, array $new): void
@@ -721,10 +608,6 @@ class ImportJob
         ))));
     }
 
-    /**
-     * Phase 4 — replay dump.sql through DatabaseRestorer in chunks. We
-     * track restore_offset so each tick resumes from where it left off.
-     */
     private function runRestore(JobState $state): void
     {
         $paths    = $state->get('paths');
@@ -737,9 +620,8 @@ class ImportJob
             return;
         }
 
-        // Cada tick abre uma conexão nova: o estado de sessão do preâmbulo
-        // (FK desligada, modo de strings, NO_AUTO_VALUE_ON_ZERO) é refeito
-        // aqui, e a FK volta a ser ligada quando o dump termina.
+        // Cada tick tem conexão nova: o estado de sessão do preâmbulo (FK
+        // desligada, modo SQL) precisa ser refeito.
         DatabaseRestorer::prepareSession($this->db);
 
         $size = filesize($paths['dump']) ?: 0;
@@ -770,13 +652,9 @@ class ImportJob
                 }
 
                 /*
-                 * Orçamento estourado, mas só dá para encerrar o tick se
-                 * algo rodou nele: o recuo abaixo devolve o cursor ao
-                 * último byte executado, e sem nenhum statement executado
-                 * esse recuo apagaria o tick inteiro — o job leria os
-                 * mesmos bytes para sempre. Um statement maior que o
-                 * orçamento (INSERT de um post gigante) segue sendo lido
-                 * até fechar.
+                 * Só encerra se algum statement rodou; senão o recuo abaixo
+                 * anularia o tick e o job leria os mesmos bytes para sempre.
+                 * Statement maior que o orçamento segue até fechar.
                  */
                 if ($restorer->statementsRun() > 0) {
                     break;
@@ -787,14 +665,9 @@ class ImportJob
                 $restorer->finish();
             } else {
                 /*
-                 * O cursor só pode avançar até o que REALMENTE rodou. O
-                 * restorer não sobrevive ao tick, então o que sobrou no
-                 * buffer — a cabeça de um statement ainda sem delimitador —
-                 * é relido do zero no próximo tick. Sem este recuo a cabeça
-                 * se perdia e o tick seguinte reabria o dump no meio de um
-                 * literal, mandando a cauda do INSERT sozinha ao banco: é
-                 * exatamente o erro de sintaxe que aparecia em dump grande
-                 * o bastante para cruzar o orçamento (qualquer fórum real).
+                 * O cursor só avança até o que de fato rodou: o statement
+                 * incompleto no buffer é relido no próximo tick, senão ele
+                 * recomeçaria no meio de um literal.
                  */
                 $offset -= $restorer->pendingBytes();
             }
@@ -813,21 +686,10 @@ class ImportJob
         );
 
         if ($offset >= $size) {
-            // Re-enable FK enforcement for any subsequent code paths
-            // sharing this connection. Belt-and-braces: the next tick
-            // would get a fresh connection anyway.
             DatabaseRestorer::enableForeignKeys($this->db);
 
-            // Belt-and-braces sequence resync on Postgres. Our dump
-            // already emits `setval(...)` in its epilogue, but: (a)
-            // archives generated before that code shipped don't carry
-            // those statements; (b) a managed-host quirk could
-            // silently swallow the call; (c) an admin who manually
-            // ran `psql -f dump.sql` wouldn't have triggered our
-            // emitter at all. Running it again on the live database
-            // is harmless — `setval(seq, MAX(id)+1, false)` always
-            // converges to the right next value — so this protects
-            // every path that ends with "PG database newly populated".
+            // O dump já traz `setval(...)`, mas arquivos antigos não. Repetir
+            // é inofensivo: `setval(seq, MAX(id)+1, false)` sempre converge.
             $this->resyncPostgresSequences($state);
 
             $state->set('phase', 'rewrite');
@@ -837,16 +699,9 @@ class ImportJob
     }
 
     /**
-     * After a bulk restore, bump every Postgres sequence past its
-     * column's `MAX(id)`. Without this the next `INSERT … RETURNING
-     * id` reuses a value already present and the user sees a
-     * `discussions_pkey` (or similar) unique-constraint violation as
-     * soon as they post their first new discussion.
-     *
-     * Sweeps every column in the current schema that has a backing
-     * sequence (covers both `SERIAL` and PG 10+ `IDENTITY`). Each
-     * `setval` is its own statement so one bad table doesn't abort
-     * the rest.
+     * Põe cada sequence do PostgreSQL depois do `MAX(id)`; sem isso o
+     * próximo INSERT colide com a chave primária. Um `setval` por coluna,
+     * para uma tabela ruim não abortar as outras.
      */
     private function resyncPostgresSequences(JobState $state): void
     {
@@ -856,10 +711,7 @@ class ImportJob
             return;
         }
 
-        // pg_get_serial_sequence returns the sequence name for both
-        // legacy SERIAL columns and PG 10+ IDENTITY columns. Filtering
-        // by `sequence IS NOT NULL` cheaply picks out exactly the
-        // columns we need to fix.
+        // pg_get_serial_sequence cobre SERIAL e IDENTITY (PG 10+).
         try {
             $rows = $this->db->select(
                 "SELECT n.nspname AS schema_name, c.relname AS table_name,
@@ -900,9 +752,7 @@ class ImportJob
                 );
                 $bumped++;
             } catch (Throwable) {
-                // Skip individual failures — keep going so one weird
-                // table (e.g. permission missing on a system view we
-                // shouldn't have picked up) doesn't break the rest.
+                // Falha isolada não interrompe as demais.
             }
         }
 
@@ -914,19 +764,9 @@ class ImportJob
     }
 
     /**
-     * Phase 5 — URL rewrite. Backups taken from one Flarum and
-     * restored onto another would otherwise leave the OLD forum URL
-     * everywhere — settings, post content, parsed_content. That breaks
-     * redirects, login cookies, and any absolute link the old site had
-     * embedded.
-     *
-     * We rewrite occurrences of the source URL (recorded in the
-     * archive metadata at export time) to this server's URL (read from
-     * config.php). When the URLs match — or one of them is missing —
-     * this is a no-op.
-     *
-     * Best-effort: each table is wrapped in its own try so missing
-     * tables on weird Flarum builds don't abort the whole import.
+     * Troca a URL de origem pela do config.php em settings e posts; sem
+     * isso, redirects, cookies e links absolutos quebram. Melhor esforço:
+     * cada tabela tem seu próprio try.
      */
     private function runRewrite(JobState $state): void
     {
@@ -937,11 +777,7 @@ class ImportJob
         if ($sourceUrl !== '' && $destUrl !== '' && $sourceUrl !== $destUrl) {
             $stats = ['settings' => 0, 'posts_content' => 0, 'posts_parsed' => 0];
 
-            // Identifier quoting depends on the destination engine —
-            // backticks for MySQL/MariaDB, double quotes for PG/SQLite.
-            // String escaping uses standard SQL doubled-single-quote on
-            // every supported engine, so the parametrised path works
-            // unchanged.
+            // Crase no MySQL/MariaDB, aspas duplas no PostgreSQL/SQLite.
             $q = function (string $ident): string {
                 return Dialect::detect($this->db)->usesBackticks()
                     ? '`' . str_replace('`', '``', $ident) . '`'
@@ -953,22 +789,16 @@ class ImportJob
             $content  = $q('content');
             $parsed   = $q('parsed_content');
 
-            // Settings — `forum.url` and any extension setting that
-            // happens to embed the old URL. Run as REPLACE() so a
-            // single value can rewrite multiple substrings. REPLACE()
-            // is portable across all four engines (MySQL, MariaDB,
-            // PostgreSQL, SQLite all expose it identically).
+            // REPLACE() existe igual nos quatro bancos.
             try {
                 $stats['settings'] = $this->db->update(
                     "UPDATE $settings SET $value = REPLACE($value, ?, ?) WHERE $value LIKE ?",
                     [$sourceUrl, $destUrl, '%'.$sourceUrl.'%']
                 );
-            } catch (Throwable) { /* ignore — table missing or schema differs */ }
+            } catch (Throwable) { /* tabela ausente ou schema diferente */ }
 
-            // Post content — Flarum 2 stores XML-tagged formatted text
-            // here. Absolute URLs inside that XML are usually only the
-            // forum's own canonical URL, so a textual replace is safe
-            // for the vast majority of forums.
+            // O XML do conteúdo quase só tem a URL do próprio fórum; a troca
+            // textual é segura.
             try {
                 $stats['posts_content'] = $this->db->update(
                     "UPDATE $posts SET $content = REPLACE($content, ?, ?) WHERE $content LIKE ?",
@@ -976,8 +806,7 @@ class ImportJob
                 );
             } catch (Throwable) { /* ignore */ }
 
-            // Post parsed content — exists on Flarum 1.x, may be
-            // absent on Flarum 2+. Try both column variants.
+            // parsed_content pode não existir no Flarum 2.
             try {
                 $stats['posts_parsed'] = $this->db->update(
                     "UPDATE $posts SET $parsed = REPLACE($parsed, ?, ?) WHERE $parsed LIKE ?",
@@ -991,11 +820,7 @@ class ImportJob
             $state->set('message', 'Skipping URL rewrite (URLs match or unknown).');
         }
 
-        /*
-         * Depois do REPLACE de URL de propósito: a configuração deste
-         * servidor tem que ser a última a escrever nas chaves que as duas
-         * etapas encostam.
-         */
+        // Depois do REPLACE de propósito, para ter a última palavra.
         $this->reapplyPreservedSettings($state);
 
         $state->set('phase', 'verify');
@@ -1003,18 +828,9 @@ class ImportJob
     }
 
     /**
-     * Phase 6 — checagem de sanidade do boot.
-     *
-     * O core dá `require` no `extend.php` da raiz dentro de
-     * `Site::fromPaths()`, antes de existir qualquer handler de erro. Uma
-     * classe ausente ali não vira 500 com stack trace: vira exit 255 com
-     * saída vazia e log do Flarum vazio. Essa fase troca esse silêncio
-     * por um aviso nomeando a classe.
-     *
-     * Limite conhecido: a checagem usa o autoloader deste processo, então
-     * enxerga o vendor/ como está agora. Um `composer install` posterior
-     * ainda pode podar pacote — o que o merge do composer.json (ver
-     * ProjectReconciler) existe para evitar.
+     * O core carrega o extend.php da raiz antes de haver handler de erro:
+     * classe ausente ali derruba o fórum sem log. Avisa nomeando a classe.
+     * Usa o autoloader atual; um `composer install` posterior ainda pode podar.
      */
     private function runVerify(JobState $state): void
     {
@@ -1042,10 +858,7 @@ class ImportJob
     }
 
     /**
-     * Registra, no máximo LIMITE vezes, o nome de uma entrada aceita
-     * cujo destino não resolveu. A amostra é limitada de propósito: o
-     * contador em `progress.unresolved_entries` é que diz o tamanho do
-     * estrago, a lista só serve para identificar o padrão.
+     * Amostra limitada: o tamanho real está em `progress.unresolved_entries`.
      */
     private function noteUnresolved(JobState $state, string $name): void
     {
@@ -1059,11 +872,8 @@ class ImportJob
     }
 
     /**
-     * Mesma amostragem limitada do `noteUnresolved`, para os destinos que
-     * resolveram mas o disco recusou. Guarda o motivo do SO junto do
-     * caminho: "Permission denied" e "No space left on device" pedem ações
-     * opostas do operador, e sem o motivo os dois chegavam como a mesma
-     * mensagem opaca.
+     * Guarda o motivo do SO: permissão negada e disco cheio pedem ações
+     * diferentes do operador.
      */
     private function noteUnwritable(JobState $state, string $dest, string $reason): void
     {
@@ -1077,11 +887,8 @@ class ImportJob
     }
 
     /**
-     * Abre o destino para escrita, criando o diretório pai quando falta.
-     * Devolve null — com o motivo do SO em `$reason` — em vez de lançar:
-     * um `vendor/` sem permissão de escrita não pode abortar a restauração
-     * inteira e levar junto o banco, os assets e o storage, que quase sempre
-     * são graváveis. A entrada perdida é contada e vira aviso no fim.
+     * Devolve null em vez de lançar: um `vendor/` sem permissão não pode
+     * abortar o restore do banco, assets e storage.
      *
      * @param  string|null  $reason  Preenchido com o erro do SO quando falha.
      * @param  string       $mode    `ab` quando a entrada continua de um tick anterior.
@@ -1108,10 +915,7 @@ class ImportJob
         return $fh;
     }
 
-    /**
-     * Mensagem do último erro do PHP, já sem o prefixo da função que o
-     * gerou (`fopen(/x/y): Failed to open stream: ` → `Permission denied`).
-     */
+    /** Último erro do PHP sem o prefixo da função (`fopen(...): ...`). */
     private function lastErrorMessage(): ?string
     {
         $msg = error_get_last()['message'] ?? null;
@@ -1126,11 +930,8 @@ class ImportJob
     }
 
     /**
-     * Confere, antes do primeiro byte gravado, se as raízes que esta
-     * seleção pretende escrever aceitam escrita pelo usuário do PHP. Não
-     * aborta: emite aviso nomeando o caminho e o usuário do processo, que
-     * é a informação que faltava quando o restore morria no meio com o
-     * caminho de um `.gitignore` qualquer.
+     * Avisa (sem abortar) quais raízes da seleção o usuário do PHP não
+     * consegue gravar, nomeando caminho e usuário.
      */
     private function preflightWritability(JobState $state): void
     {
@@ -1178,9 +979,8 @@ class ImportJob
     }
 
     /**
-     * Sobe do caminho até o primeiro diretório que já existe. É nele que a
-     * permissão importa: o destino final costuma ser justamente o que ainda
-     * precisa ser criado.
+     * A permissão que importa é a do primeiro ancestral existente; o
+     * destino em si costuma ainda não existir.
      */
     private function nearestExistingAncestor(string $path): ?string
     {
@@ -1202,10 +1002,6 @@ class ImportJob
         return null;
     }
 
-    /**
-     * Nome do usuário do processo PHP, para o aviso de permissão apontar o
-     * dono que o diretório precisa aceitar.
-     */
     private function processUser(): string
     {
         if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
@@ -1220,9 +1016,6 @@ class ImportJob
         return $user !== '' ? $user : 'desconhecido';
     }
 
-    /**
-     * Acrescenta um aviso ao state sem duplicar o que já está lá.
-     */
     private function addWarning(JobState $state, string $message): void
     {
         $warnings = (array) $state->get('warnings', []);
@@ -1235,11 +1028,8 @@ class ImportJob
     }
 
     /**
-     * Fecha o job. Uma restauração que perdeu entradas termina em
-     * `done` — os dados já estão no disco, abortar aqui não desfaz
-     * nada — mas NUNCA com a mensagem de sucesso liso: o contador de
-     * não-resolvidas vira aviso explícito, que é justamente o que
-     * faltava quando um import incompleto se apresentava como pronto.
+     * Restore com perdas termina em `done` (abortar não desfaz nada), mas
+     * nunca com mensagem de sucesso limpo: as perdas viram aviso.
      */
     private function runFinalize(JobState $state): void
     {
@@ -1291,12 +1081,7 @@ class ImportJob
             $warnings
         ))));
 
-        /*
-         * Referência pendurada no extend.php da raiz conta como restore
-         * incompleto tanto quanto uma entrada não gravada: nos dois casos
-         * o operador precisa agir antes de recarregar, e nos dois a tela
-         * de sucesso limpo seria mentira.
-         */
+        // Classe ausente no extend.php da raiz também conta como incompleto.
         $state->forgetBinary();
         $state->set('incomplete', $unresolved > 0 || $unwritable > 0 || $dangling !== []);
         $state->set('phase', 'done');
@@ -1310,19 +1095,9 @@ class ImportJob
     }
 
     /**
-     * Normalise the user's selection into a stable shape:
-     *   ['db' => bool, 'assets' => bool, 'storage' => bool,
-     *    'extensions' => true | false | list<string>,
-     *    'root_extend' => bool, 'preserve_settings' => bool]
-     *
-     * `null` short-circuits to restore-everything for backwards
-     * compatibility with older import requests.
-     *
-     * Os dois campos novos têm defaults assimétricos de propósito:
-     * `root_extend` é opt-in porque sobrescrever o extend.php da raiz
-     * troca configuração viva do destino; `preserve_settings` é opt-out
-     * porque perder a configuração de infraestrutura do destino é o
-     * defeito que essa camada existe para impedir.
+     * `null` restaura tudo. `root_extend` é opt-in (troca configuração viva
+     * do destino); `preserve_settings` é opt-out (perder a configuração do
+     * destino é justamente o que se quer evitar).
      *
      * @param array<string, mixed>|null $raw
      * @return array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>, root_extend: bool, preserve_settings: bool}|null
@@ -1352,12 +1127,8 @@ class ImportJob
     }
 
     /**
-     * Decide whether an entry should be extracted, based on the user's
-     * import selection. The DB is all-or-nothing; file roots
-     * (assets/storage) flip per checkbox; extensions can be filtered
-     * down to specific top-level directory names. Unknown roots fall
-     * back to "restore" so future archive shapes don't get silently
-     * dropped.
+     * Raízes desconhecidas são restauradas, para formatos futuros não se
+     * perderem em silêncio.
      */
     private function shouldExtract(string $name, int $type, ?array $selection): bool
     {
@@ -1376,11 +1147,8 @@ class ImportJob
             'storage' => ! empty($selection['storage']),
             'extensions' => $this->isExtensionAllowed($name, $selection['extensions'] ?? null),
             /*
-             * `project/*` é sempre extraído, mesmo com tudo desmarcado:
-             * ele vai para um staging, não para o disco vivo, e é o que
-             * permite ao reconciliador comparar o manifesto do backup com
-             * o deste servidor e avisar quais pacotes faltam. Quem decide
-             * o que efetivamente sobrescreve algo é o runReconcile.
+             * Sempre extraído: vai para staging, não para o disco vivo, e
+             * o runReconcile decide o que aplicar.
              */
             'project' => true,
             default   => true,
@@ -1408,15 +1176,9 @@ class ImportJob
     }
 
     /**
-     * Build a `extensionId → absolute base directory` map from the
-     * archive metadata. Used by `resolveDestination` to know where to
-     * restore vendor/ extensions vs workbench/ ones.
+     * Manifesto v1 trazia só nomes de diretório, sempre em `workbench/<nome>`.
      *
-     * Backwards compatible with the v1 manifest shape, where
-     * `manifest.extensions` was a flat `string[]` of workbench
-     * directory names. Those always restore to `workbench/<name>`.
-     *
-     * @return array<string, string>  id → absolute path
+     * @return array<string, string>  id → caminho absoluto
      */
     private function extensionDestinationMap(JobState $state): array
     {
@@ -1428,7 +1190,6 @@ class ImportJob
         $map = [];
         foreach ($exts as $ext) {
             if (is_string($ext)) {
-                // v1 archive — dirname → workbench/<dirname>
                 $map[$ext] = $base.DIRECTORY_SEPARATOR.'workbench'.DIRECTORY_SEPARATOR.$ext;
                 continue;
             }
@@ -1436,14 +1197,9 @@ class ImportJob
             $id = (string) ($ext['id'] ?? '');
             $rel = (string) ($ext['relative'] ?? '');
             if ($id === '' || $rel === '') continue;
-            // `relative` is read from the archive header, which is fully
-            // attacker-controlled (the archive "travelled across servers").
-            // Accept ONLY the two legitimate layouts — workbench/<dir> or
-            // vendor/<vendor>/<package> — with each segment strictly
-            // allow-listed and forbidden from starting with a dot (blocks
-            // `.`/`..`) or containing a backslash. Anything else is dropped
-            // rather than trusted, so a crafted manifest can't point an
-            // extension's files at an arbitrary directory (§13.7).
+            // `relative` vem do cabeçalho, controlado por quem fez o arquivo.
+            // Só aceita workbench/<dir> ou vendor/<vendor>/<pacote>, sem
+            // segmento começando com ponto nem barra invertida.
             if (! preg_match(
                 '#\A(workbench/[A-Za-z0-9_-][A-Za-z0-9._-]*'
                 . '|vendor/[A-Za-z0-9_-][A-Za-z0-9._-]*/[A-Za-z0-9_-][A-Za-z0-9._-]*)\z#',
@@ -1457,10 +1213,7 @@ class ImportJob
     }
 
     /**
-     * Map a logical entry name like "assets/avatars/1.png" or
-     * "extensions/ramon-verified/extend.php" to the absolute path on
-     * this install. Returns null for any name that escapes the
-     * whitelisted roots, or for an unknown extension id.
+     * Null para nome fora das raízes permitidas ou extensão desconhecida.
      */
     private function resolveDestination(string $name, JobState $state): ?string
     {
@@ -1477,9 +1230,6 @@ class ImportJob
         if ($rest === '') return null;
 
         if ($root === 'extensions') {
-            // For an entry like "extensions/<id>/<inner>", look up
-            // <id> in the manifest map to learn where this extension
-            // originally lived (workbench/<name> or vendor/<vendor>/<name>).
             $cut = strpos($rest, '/');
             if ($cut === false) return null;
             $extId = substr($rest, 0, $cut);
@@ -1491,15 +1241,8 @@ class ImportJob
             if ($base === null) return null;
         } elseif ($root === 'project') {
             /*
-             * Arquivos da raiz do projeto. A allow-list continua fechada
-             * — nada além dos três nomes conhecidos entra, para um
-             * arquivo hostil não conseguir largar um `.htaccess` ou um
-             * override de public/ na instalação.
-             *
-             * A diferença para as outras raízes: o destino aqui é um
-             * staging DENTRO do diretório do job, nunca a raiz viva. O
-             * que chega ao disco real é decidido depois pelo
-             * ProjectReconciler, que faz merge em vez de overwrite.
+             * Allow-list fechada (um arquivo hostil não larga `.htaccess`),
+             * e o destino é o staging do job, nunca a raiz viva.
              */
             if (! in_array($rest, ProjectReconciler::ALLOWED, true)) {
                 return null;
@@ -1522,13 +1265,8 @@ class ImportJob
 
         $candidate = $base.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $inner);
 
-        // Final confinement. The string blacklist at the top stops
-        // literal `../` traversal, but only canonicalising the resolved
-        // parent and re-checking the prefix catches an escape through a
-        // SYMLINKED path component (e.g. a symlinked `storage/` subdir on
-        // shared hosting). This mirrors the guard StoragePaths uses for
-        // downloads (§13.4/§13.5/§13.7); without it a write could follow
-        // a link outside the whitelisted root.
+        // O filtro de `..` não pega fuga por symlink; só o realpath do pai
+        // comparado com a base pega.
         @mkdir(dirname($candidate), 0755, true);
         if (! $this->isWithin($base, dirname($candidate))) {
             return null;
@@ -1538,11 +1276,8 @@ class ImportJob
     }
 
     /**
-     * True when `$child` resolves to a path inside `$base`. Both sides go
-     * through realpath so symlinks are followed before comparison, and
-     * the compare is case-insensitive so Windows' drive-letter / casing
-     * differences don't produce a false negative (same approach as
-     * StoragePaths::backupFilePath).
+     * Compara via realpath (segue symlinks) e sem diferenciar caixa, por
+     * causa do Windows.
      */
     private function isWithin(string $base, string $child): bool
     {

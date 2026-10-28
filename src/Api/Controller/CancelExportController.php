@@ -21,8 +21,7 @@ use Ramon\Backup\StoragePaths;
 /**
  * DELETE /api/backup/exports/{id}
  *
- * User cancelled or dismissed the export modal. Wipes the per-job tmp
- * dir entirely — partial archive, dump.sql, manifest, state file.
+ * Apaga todo o staging do job cancelado, inclusive o dump.sql em texto puro.
  */
 class CancelExportController implements RequestHandlerInterface
 {

@@ -21,27 +21,17 @@ use Ramon\Backup\StoragePaths;
 /**
  * POST /api/backup/imports/{id}/chunk
  *
- * Append a single chunk of the .flarum archive to the staging file.
- *
- * The chunk's byte offset within the final file is given via the
- * `X-Chunk-Offset` request header. The body is the raw chunk payload
- * (`Content-Type: application/octet-stream`). Same offset on retry
- * is idempotent — we seek + overwrite, so a flaky network can resend
- * a chunk without corrupting earlier or later bytes.
- *
- * Response: `{ received, expected }` — total bytes now staged vs the
- * size declared at /backup/imports init time. The frontend uses these
- * for the progress bar and to decide when to call /inspect.
+ * Grava uma parte do arquivo no offset do header `X-Chunk-Offset`; o corpo
+ * são os bytes crus. Reenviar o mesmo offset sobrescreve, então repetir é
+ * seguro. Responde `{ received, expected }` para a barra de progresso.
  */
 class ChunkImportController implements RequestHandlerInterface
 {
     use AdminOnlyController;
 
     /**
-     * Per-chunk hard cap. Slightly larger than the recommended chunk
-     * size so a slow / mismatched client sending a one-shot bigger
-     * chunk doesn't immediately fail; but small enough that one
-     * chunk never strains memory_limit during framework parsing.
+     * Teto por requisição: folga sobre o tamanho recomendado, mas pequeno o
+     * bastante para não pesar no memory_limit.
      */
     private const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
 
@@ -86,9 +76,7 @@ class ChunkImportController implements RequestHandlerInterface
             ]);
         }
 
-        // Stream the request body straight to disk in fixed-size
-        // reads so we never hold more than 64 KB of the chunk in
-        // memory regardless of the chunk's total size.
+        // Lê em blocos de 64 KB para não segurar a parte inteira na memória.
         $body = $request->getBody();
         $body->rewind();
 
@@ -98,7 +86,7 @@ class ChunkImportController implements RequestHandlerInterface
             ]);
         }
 
-        $fh = @fopen($dest, 'cb'); // c = open for read+write, don't truncate, create if missing
+        $fh = @fopen($dest, 'cb'); // 'c' não trunca o arquivo
         if ($fh === false) {
             throw new ValidationException(['chunk' => 'Could not open staging file.']);
         }
@@ -161,9 +149,8 @@ class ChunkImportController implements RequestHandlerInterface
     }
 
     /**
-     * Pre-create / pre-extend the staging file to at least `$offset`
-     * bytes. Without this, fseek on a `cb`-mode handle won't grow the
-     * file, and writes can land at the wrong offset.
+     * Garante o arquivo com pelo menos `$offset` bytes; fseek em modo `cb`
+     * não estende o arquivo e a escrita cairia no lugar errado.
      */
     private function ensureFileSize(string $path, int $offset): int|false
     {
@@ -172,9 +159,7 @@ class ChunkImportController implements RequestHandlerInterface
         if ($size === false) return false;
         if ($size >= $offset) return $size;
 
-        // Extend with zero bytes up to the offset. We rarely take this
-        // path — only when chunks arrive out of order, which the client
-        // doesn't normally do but is allowed by the protocol.
+        // Só acontece com partes fora de ordem, que o protocolo permite.
         $fh = @fopen($path, 'ab');
         if ($fh === false) return false;
         try {

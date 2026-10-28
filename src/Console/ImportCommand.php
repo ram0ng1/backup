@@ -20,19 +20,11 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * `php flarum backup:import <archive>` — restore a `.flarum` archive
- * into the running install, to completion, in a single process.
+ * `php flarum backup:import <arquivo>` — restaura um `.flarum` num só processo.
  *
- * This is the destructive half of a transfer: every bundled table is
- * dropped and recreated, and bundled files overwrite their
- * destinations. Because of that we refuse to run without an explicit
- * `--yes`, the CLI equivalent of the "I understand this replaces my
- * data" checkbox in the admin UI.
- *
- * Like {@see ExportCommand}, the heavy lifting is delegated to the same
- * tick-based {@see ImportJob} the web flow uses; the CLI simply loops
- * `runTick()` with no HTTP timeout and no browser tab to keep alive,
- * which is why large or slow restores are "better handled" here.
+ * Destrutivo: tabelas do arquivo são recriadas e arquivos sobrescritos, por
+ * isso exige `--yes` (o equivalente da confirmação no painel). Usa o mesmo
+ * {@see ImportJob} da web em loop de `runTick()`.
  */
 class ImportCommand extends AbstractCommand
 {
@@ -139,13 +131,9 @@ class ImportCommand extends AbstractCommand
     }
 
     /**
-     * Despeja os avisos e escolhe o exit code.
-     *
-     * Um restore que terminou `incomplete` sai com 1 de propósito: são os
-     * casos em que o operador precisa agir antes de recarregar o fórum —
-     * entrada não gravada, ou classe que o extend.php da raiz referencia
-     * e o autoloader não resolve. Sair 0 aqui é o que faz um script de
-     * deploy seguir adiante rumo a um HTTP 500 sem mensagem.
+     * Restore `incomplete` sai com 1: o operador precisa agir antes de
+     * recarregar o fórum, e sair 0 deixaria um script de deploy seguir
+     * rumo a um HTTP 500.
      */
     private function reportOutcome(JobState $state): int
     {
@@ -162,10 +150,8 @@ class ImportCommand extends AbstractCommand
     }
 
     /**
-     * Build the import selection. When the user passes no selection
-     * flags at all we return null, which ImportJob reads as "restore
-     * everything in the archive". Passing any flag switches to an
-     * explicit selection where unspecified sections default to false.
+     * Sem nenhuma flag de seleção devolve null (restaura tudo); com qualquer
+     * flag, o que não foi pedido fica de fora.
      */
     private function resolveSelection(): ?array
     {
@@ -212,10 +198,7 @@ class ImportCommand extends AbstractCommand
     }
 
     /**
-     * Pump runTick() to completion with the same single-line spinner +
-     * percent + message indicator as {@see ExportCommand}, so a long
-     * restore never looks frozen. Symfony's ProgressBar throttles on
-     * non-decorated output, so piping to a file stays readable.
+     * Roda os ticks até o fim com a mesma linha de status do {@see ExportCommand}.
      */
     private function driveToCompletion(JobState $state): JobState
     {

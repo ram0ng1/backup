@@ -28,73 +28,46 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Orchestrates a single export job across multiple HTTP ticks.
- *
- * Lifecycle ("phases" in the state file):
- *   scan      → enumerate files, persist manifest
- *   db_dump   → write SQL to dump.sql incrementally (skipped if no DB)
- *   bundle    → open archive, write entries (db + files) one at a time,
- *               possibly resuming mid-entry across ticks
- *   finalize  → close stream, rename to final filename, insert DB row,
- *               delete tmp dir
- *   done      → terminal
- *
- * Per-tick budget: at most BUDGET_BYTES of payload bytes get emitted.
- * Phase transitions are checked between work items, so a tick may end
- * partway through a single file's bytes.
+ * Conduz uma exportação em vários ticks HTTP, nas fases scan → db_dump →
+ * bundle → finalize → done. Cada tick grava no máximo BUDGET_BYTES, então
+ * pode parar no meio de um arquivo e retomar no tick seguinte.
  */
 class ExportJob
 {
-    /** Bytes of payload emitted per tick before pausing. */
+    /** Bytes gravados por tick antes de pausar. */
     public const BUDGET_BYTES = 4_194_304; // 4 MB
 
-    /** Hard ceiling on a single file we'll bundle (skip larger). */
+    /** Arquivos maiores que isso ficam de fora. */
     public const FILE_SIZE_LIMIT = 2 * 1024 * 1024 * 1024; // 2 GB
 
     /**
-     * Directories we never descend into while scanning extension or
-     * project paths. Without these, a single workbench extension with
-     * `node_modules/` can balloon a backup from a few MB to hundreds
-     * of MB and tens of thousands of entries — and none of it is
-     * useful at restore time (npm/yarn / git can rebuild it cleanly).
-     *
-     * Matched by directory basename anywhere in the tree, so e.g.
-     * a nested `js/node_modules/` is also pruned.
+     * Diretórios ignorados em qualquer nível da árvore (pelo nome). Um
+     * `node_modules/` sozinho infla o backup em centenas de MB, e nada disso
+     * serve no restore: npm/composer/git reconstroem.
      */
     private const PRUNE_DIR_NAMES = [
-        // Package managers
         'node_modules' => true,
-        // Build artifacts that are reproducible from source. We
-        // intentionally KEEP `dist` because Flarum loads it at
-        // runtime — it's regenerable, but the destination would
-        // otherwise need `npm run build` before the extension works.
+        // `dist` fica: o Flarum carrega em runtime e o destino precisaria
+        // de `npm run build` sem ele.
         'dist-typings' => true,
         '.parcel-cache' => true,
-        // Version control
         '.git'         => true,
         '.svn'         => true,
         '.hg'          => true,
-        // Tooling / IDE
         '.idea'        => true,
         '.vscode'      => true,
         '.history'     => true,
-        // Test / coverage outputs
         'coverage'     => true,
         '.nyc_output'  => true,
-        // Python noise
         '__pycache__'  => true,
-        // We never want to recurse into a nested vendor/ inside an
-        // extension dir (would pull thousands of composer files).
+        // vendor/ dentro de extensão traria milhares de arquivos do composer.
         'vendor'       => true,
     ];
 
     /**
-     * The live database connection. Declared as the concrete
-     * {@see Connection} because the dump path needs `getDriverName()`
-     * (via {@see Dialect::detect}), which {@see ConnectionInterface}
-     * does not expose. The constructor accepts the interface so Flarum's
-     * container (which binds `ConnectionInterface`, not the concrete
-     * class) can inject it, then narrows once here.
+     * Tipo concreto porque o dump precisa de `getDriverName()`, que a
+     * interface não expõe. O construtor recebe a interface (é o que o
+     * container do Flarum injeta) e estreita aqui.
      */
     protected Connection $db;
 
@@ -113,19 +86,13 @@ class ExportJob
     }
 
     /**
-     * Create a fresh export job, returning the new state. The caller
-     * persists the JobState and pumps `runTick()` until phase=done.
-     *
-     * `contents.extensions` is permissive:
-     *   - bool      — true bundles every installed extension, false skips
-     *   - string[]  — bundle exactly these extension ids (workbench or vendor)
+     * Cria o job; quem chama roda `runTick()` até phase=done.
+     * `contents.extensions`: true (todas), false (nenhuma) ou lista de ids.
      *
      * @param array{db: bool, assets: bool, storage: bool, extensions: bool|list<string>} $contents
      * @param array{enabled: bool, public_key?: string|null} $encryption
-     * @param string|null $targetDialect  Where the dump is meant to be restored
-     *                                    (mysql, mariadb, postgres, sqlite). When
-     *                                    null, falls back to the source engine —
-     *                                    i.e. a same-engine restore.
+     * @param string|null $targetDialect  Banco de destino (mysql, mariadb, postgres,
+     *                                    sqlite); null usa o mesmo da origem.
      * @param int|null $userId
      */
     public function start(string $jobId, array $contents, array $encryption, ?string $targetDialect, ?int $userId): JobState
@@ -142,9 +109,7 @@ class ExportJob
             throw new RuntimeException('Encryption is enabled but no public key is configured.');
         }
 
-        // Resolve target dialect early so we fail fast on a typo
-        // rather than midway through `runDbDump`. `null` means
-        // "same as source" — picked up at runtime by DatabaseDumper.
+        // Valida já aqui para um dialeto inválido não falhar no meio do dump.
         $resolvedTarget = null;
         if ($targetDialect !== null && $targetDialect !== '') {
             $resolvedTarget = Dialect::parse($targetDialect)->value;
@@ -160,8 +125,7 @@ class ExportJob
                 'db'         => ! empty($contents['db']),
                 'assets'     => ! empty($contents['assets']),
                 'storage'    => ! empty($contents['storage']),
-                // Preserve the original shape so the scan phase can
-                // tell "all extensions" (true) apart from "this list".
+                // Mantém o formato: o scan distingue "todas" (true) de lista.
                 'extensions' => $this->normaliseExtensionSelection($contents['extensions'] ?? false),
             ],
             'encryption'    => [
@@ -169,11 +133,8 @@ class ExportJob
                 'use_external_key' => $useEncryption && $providedKey !== '',
                 'external_public_key' => $useEncryption && $providedKey !== '' ? $providedKey : null,
             ],
-            // Target engine the dump is being prepared for. Stored in
-            // the job state so every tick uses the same emitter, and
-            // travels into the archive header so the import side can
-            // refuse a dump targeting a different engine than the
-            // destination connection.
+            // Fica no estado para todo tick usar o mesmo emissor, e vai no
+            // cabeçalho para o import recusar dump feito para outro banco.
             'target_dialect' => $resolvedTarget,
             'progress'      => [
                 'total_bytes'       => 0,
@@ -201,24 +162,16 @@ class ExportJob
                 'file_offset'    => 0,
                 'db_offset'      => 0,
             ],
-            // Notes from the introspector about lossy translations
-            // (unsupported types, generated columns, etc.). Accumulated
-            // across ticks and surfaced on the completion screen so
-            // the admin knows what didn't survive verbatim.
+            // Avisos de tradução com perda (tipos sem suporte, colunas
+            // geradas), acumulados entre ticks e mostrados no fim.
             'db_warnings'   => [],
-            // Resumable scan plan — built lazily on the first scan tick
-            // (see runScan/buildScanPlan), then advanced one target per
-            // tick so no single request walks the whole install.
+            // Plano do scan, montado no primeiro tick; um alvo por tick.
             'scan'          => [],
         ];
 
         return JobState::create($dir.DIRECTORY_SEPARATOR.'job.json', $initial);
     }
 
-    /**
-     * Run one tick of work. Mutates and saves the JobState. Returns the
-     * (possibly updated) state.
-     */
     public function runTick(JobState $state): JobState
     {
         $phase = $state->get('phase');
@@ -248,19 +201,9 @@ class ExportJob
     }
 
     /**
-     * Phase 1 — enumerate every file we'll bundle and compute total
-     * size, then seed the DB cursor.
-     *
-     * The scan is chunked across ticks: a plan of "targets" (each asset
-     * root, the storage root, one entry per selected extension, and the
-     * composer manifest) is built once, then ONE target is walked per
-     * tick and its files appended to an NDJSON manifest. This bounds a
-     * single HTTP request to one root's stat walk instead of the whole
-     * install at once, so a large multi-extension forum no longer risks
-     * blowing max_execution_time on the very first tick. (A single
-     * pathological root — typically a huge storage/ tree — is still
-     * walked in one tick; installs that large should run the CLI
-     * exporter, which has no request timeout.)
+     * Lista os arquivos um alvo por tick (assets, storage, cada extensão,
+     * composer) num manifesto NDJSON, para não estourar max_execution_time.
+     * Um storage/ enorme ainda cabe num tick só; nesse caso, use a CLI.
      */
     private function runScan(JobState $state): void
     {
@@ -285,18 +228,15 @@ class ExportJob
 
             $state->set('message', sprintf('Scanning… (%d/%d)', $idx + 1, count($targets)));
             $state->save();
-            return; // stay in 'scan'; the next tick processes the next target
+            return; // continua em 'scan'
         }
 
         $this->finalizeScan($state, $scan);
     }
 
     /**
-     * Build the (persisted) list of scan targets from the content
-     * selection, and clear any stale manifest so the NDJSON appends
-     * start from a clean slate. The selection drives WHICH extensions go
-     * in; the inventory drives WHERE they live (workbench/ for local
-     * dev, vendor/ for composer-managed).
+     * A seleção diz QUAIS extensões entram; o inventário diz ONDE estão
+     * (workbench/ ou vendor/). Apaga o manifesto antigo antes.
      *
      * @return array{built: bool, targets: list<array<string, mixed>>, idx: int, files: int, bytes: int, counts: array{asset: int, storage: int, extension: int}, ext_descriptors: list<array<string, mixed>>, has_composer: bool, has_root_extend: bool}
      */
@@ -318,8 +258,7 @@ class ExportJob
             $targets[] = [
                 'kind' => 'storage',
                 'base' => $storageBase,
-                // Skip the directories that hold OUR backup data —
-                // backing up backups is circular.
+                // Não faz backup dos próprios backups.
                 'skip' => [
                     $storageBase.DIRECTORY_SEPARATOR.'backups',
                     $storageBase.DIRECTORY_SEPARATOR.'backup-tmp',
@@ -343,18 +282,15 @@ class ExportJob
                         'title'    => $ext['title'],
                         'version'  => $ext['version'],
                         'location' => $ext['location'],
-                        // Original path on the source forum, relative to
-                        // the Flarum base — the import side restores into
-                        // the same layout (vendor/ vs workbench/).
+                        // Caminho relativo na origem; o import restaura no
+                        // mesmo lugar (vendor/ ou workbench/).
                         'relative' => $ext['relative'],
                     ],
                 ];
             }
 
-            // composer.json + composer.lock travel alongside whenever the
-            // user is bundling extensions: vendor/ extensions are useless
-            // on the destination without the matching composer manifest
-            // (the next `composer install` would simply wipe them).
+            // Sem o composer.json/lock, o próximo `composer install` no
+            // destino apagaria as extensões de vendor/.
             $targets[] = ['kind' => 'composer'];
         }
 
@@ -372,9 +308,6 @@ class ExportJob
     }
 
     /**
-     * Walk a single scan target, append its files to the NDJSON
-     * manifest, and roll the running counts/descriptors into $scan.
-     *
      * @param array<string, mixed> $target
      */
     private function scanOneTarget(JobState $state, array &$scan, array $target): void
@@ -412,12 +345,9 @@ class ExportJob
 
             case 'composer':
                 /*
-                 * O extend.php da raiz viaja junto com o composer.json de
-                 * propósito: é ele que CONSUME as dependências que o
-                 * manifesto declara. Mandar só o manifesto foi o que
-                 * produziu, num restore real, um extend.php apontando para
-                 * uma classe que o composer install seguinte tinha podado —
-                 * fatal no boot, antes de existir handler de erro.
+                 * O extend.php da raiz vai junto porque consome as
+                 * dependências do manifesto; sem ele em sincronia, pode
+                 * apontar para classe podada e dar fatal no boot.
                  */
                 foreach (['composer.json', 'composer.lock', 'extend.php'] as $rel) {
                     $abs = rtrim($this->appPaths->base, '/\\').DIRECTORY_SEPARATOR.$rel;
@@ -441,11 +371,8 @@ class ExportJob
     }
 
     /**
-     * Append file entries to the NDJSON manifest, one JSON object per
-     * line. Both a JSON-encode failure (e.g. a filename that is not
-     * valid UTF-8) and a write failure throw loudly — a silently dropped
-     * manifest would otherwise yield a "successful" backup missing every
-     * bundled file.
+     * Falha de encode (nome não UTF-8) ou de escrita lança exceção: um
+     * manifesto perdido em silêncio daria um backup "ok" sem os arquivos.
      *
      * @param list<array{name: string, absolute: string, size: int}> $files
      */
@@ -469,11 +396,6 @@ class ExportJob
         }
     }
 
-    /**
-     * Every scan target walked — assemble the summary the import UI reads
-     * (per-section counts + per-extension descriptors), seed the DB table
-     * cursor, fold totals into progress, and advance to the next phase.
-     */
     private function finalizeScan(JobState $state, array $scan): void
     {
         $contents    = $state->get('contents');
@@ -486,9 +408,8 @@ class ExportJob
             'tables' => ! empty($contents['db']) ? $this->listTablesSafely() : [],
         ]));
 
-        // Compact summary that travels in the archive header so the
-        // import UI can render selection checkboxes without parsing the
-        // entry stream up front.
+        // Vai no cabeçalho para a tela de import montar as opções sem ler
+        // as entradas.
         $summary = [
             'asset_count'     => (int) $scan['counts']['asset'],
             'storage_count'   => (int) $scan['counts']['storage'],
@@ -502,7 +423,7 @@ class ExportJob
         $progress = $state->get('progress');
         $progress['total_files'] = (int) $scan['files'];
         $progress['total_bytes'] = (int) $scan['bytes'];
-        // We do not know SQL size up front; reflect it once dump finishes.
+        // O tamanho do SQL só entra no total quando o dump terminar.
         $state->set('progress', $progress);
 
         $state->set('phase', ! empty($contents['db']) ? 'db_dump' : 'bundle');
@@ -510,10 +431,6 @@ class ExportJob
         $state->save();
     }
 
-    /**
-     * Phase 2 — emit SQL into dump.sql. Each tick processes a few
-     * tables / rows and stops when BUDGET_BYTES is reached.
-     */
     private function runDbDump(JobState $state): void
     {
         $cursor = $state->get('cursor');
@@ -538,9 +455,8 @@ class ExportJob
                 $cursor['wrote_preamble'] = true;
             }
 
-            // Drop every table up front (before any CREATE) so a restore
-            // is robust against whatever schema currently exists on the
-            // destination. See DatabaseDumper::dropAllTables().
+            // Todos os DROP antes de qualquer CREATE, para o restore não
+            // depender do schema que já existe no destino.
             if (empty($cursor['wrote_drops'])) {
                 $sql = $dumper->dropAllTables();
                 fwrite($fh, $sql);
@@ -552,8 +468,6 @@ class ExportJob
                 $table = $cursor['tables'][$cursor['table_idx']];
 
                 if ($cursor['table_offset'] === 0) {
-                    // First touch on this table — count rows (once, for the
-                    // progress readout) then emit DDL.
                     $cursor['table_total'] = $dumper->countRows($table);
                     $sql = $dumper->dumpSchema($table);
                     fwrite($fh, $sql);
@@ -562,7 +476,6 @@ class ExportJob
 
                 $batch = $dumper->dumpDataBatch($table, $cursor['table_offset'], $cursor['table_key'] ?? null);
                 if ($batch['consumed'] === 0) {
-                    // Table exhausted — advance to the next.
                     $cursor['table_idx']++;
                     $cursor['table_offset'] = 0;
                     $cursor['table_key'] = null;
@@ -586,10 +499,8 @@ class ExportJob
 
         $state->set('cursor', $cursor);
 
-        // Roll up any lossy-translation notes the introspector raised
-        // this tick. Each instance only carries warnings for the
-        // tables it personally described, so the persistent list in
-        // state is the union across all ticks.
+        // Cada dumper só conhece os avisos das tabelas deste tick; o estado
+        // guarda a união.
         $existing = (array) $state->get('db_warnings', []);
         $merged = array_values(array_unique(array_merge(
             array_map('strval', $existing),
@@ -619,8 +530,7 @@ class ExportJob
             ));
         }
 
-        // Structured per-table progress so a poller (admin UI) can render
-        // its own indicator instead of parsing the message string.
+        // Progresso estruturado para o painel não depender da mensagem.
         $state->set('db_progress', [
             'table_index' => (int) $cursor['table_idx'],
             'table_count' => count($cursor['tables']),
@@ -630,9 +540,7 @@ class ExportJob
         ]);
 
         if ($allTablesDone) {
-            // Now that the dump.sql is sized, fold its bytes into the
-            // bundle progress total so the percent bar reflects work
-            // remaining across both DB and files in one number.
+            // Soma o dump ao total para a barra cobrir banco e arquivos.
             $progress = $state->get('progress');
             $progress['total_bytes'] = (int) $progress['total_bytes'] + (filesize($paths['dump']) ?: 0);
             $state->set('progress', $progress);
@@ -643,10 +551,6 @@ class ExportJob
         $state->save();
     }
 
-    /**
-     * Phase 3 — copy the SQL dump and every file into the archive,
-     * resuming mid-entry between ticks if necessary.
-     */
     private function runBundle(JobState $state): void
     {
         $cursor   = $state->get('cursor');
@@ -657,7 +561,6 @@ class ExportJob
 
         $archivePath = $paths['archive'];
 
-        // Open or resume writer.
         $writer = $this->openWriter($state, $archivePath, $enc);
 
         try {
@@ -706,8 +609,7 @@ class ExportJob
                     $headerWritten = $cursor['file_offset'] > 0;
 
                     if (! $headerWritten && ! is_file($abs)) {
-                        // File vanished mid-export. Skip it so the rest
-                        // of the bundle can still complete.
+                        // Sumiu antes do cabeçalho: dá para pular sem desalinhar.
                         $cursor['file_idx']++;
                         $cursor['file_offset'] = 0;
                         $progress['processed_files']++;
@@ -730,11 +632,9 @@ class ExportJob
                     $written = is_file($abs) ? $this->streamRange($abs, $cursor['file_offset'], $want, $writer) : 0;
                     if ($written === 0) {
                         /*
-                         * O cabeçalho já declarou o tamanho do scan e o
-                         * leitor confia nele: um arquivo que encolheu ou
-                         * sumiu no meio (log girando, sessão regravada) tem
-                         * o resto completado com zeros. Pular desalinhava o
-                         * arquivo inteiro a partir daqui.
+                         * O cabeçalho já declarou o tamanho e o leitor confia
+                         * nele: se o arquivo encolheu ou sumiu, completa com
+                         * zeros para não desalinhar o resto.
                          */
                         $written = $this->padEntry($writer, $want);
                         $this->noteChangedFile($state, $entry['name']);
@@ -752,13 +652,11 @@ class ExportJob
                 }
             }
 
-            // Persist encryption state so the next tick can resume.
+            // Estado do secretstream para o próximo tick retomar.
             $writer->flushEncryptedBuffer();
             $encState = $writer->serializeEncryptionState();
             if ($encState !== null) {
                 $state->setBinary('stream_state', $encState['state']);
-                // After flushEncryptedBuffer, buffer is empty — but
-                // record it explicitly for completeness.
                 $state->setBinary('stream_buffer', $encState['buffer']);
             }
         } finally {
@@ -784,22 +682,14 @@ class ExportJob
         $state->save();
     }
 
-    /**
-     * Phase 4 — promote the partial archive to the canonical backups
-     * dir, write the DB row, and delete the per-job tmp dir.
-     */
     private function runFinalize(JobState $state): void
     {
         $paths    = $state->get('paths');
         $contents = $state->get('contents');
         $enc      = $state->get('encryption');
 
-        // Insert a placeholder row so we can derive the final filename
-        // from its ID, then rename + update.
-        // `target_dialect` is left NULL for same-engine backups so the
-        // list UI can cheaply tell "this is a normal backup" apart from
-        // "this was retargeted to a different engine" without having to
-        // look up the source.
+        // A linha provisória dá o ID usado no nome final. `target_dialect`
+        // fica NULL quando o destino é o mesmo banco da origem.
         $row = Backup::create([
             'filename'       => 'pending.flarum',
             'size_bytes'     => 0,
@@ -815,7 +705,6 @@ class ExportJob
         $finalPath = $this->paths->backupsDir().DIRECTORY_SEPARATOR.$finalName;
 
         if (! @rename($paths['archive'], $finalPath)) {
-            // Cleanup placeholder if the move failed.
             $row->delete();
             throw new RuntimeException('Could not move archive into place.');
         }
@@ -824,9 +713,8 @@ class ExportJob
         $row->size_bytes = filesize($finalPath) ?: 0;
         $row->save();
 
-        // Tmp dir cleanup. Keep the job state file for one extra tick
-        // so the JS can read terminal status; it's wiped by the JS
-        // dismiss action via DELETE on the export endpoint.
+        // O job.json fica para o JS ler o status final; sai no DELETE do
+        // endpoint de exportação.
         @unlink($paths['dump']);
         @unlink($paths['manifest']);
 
@@ -841,16 +729,11 @@ class ExportJob
         $state->save();
     }
 
-    /**
-     * Open the writer for the current tick — first tick creates the
-     * file + header; later ticks resume by appending.
-     */
     private function openWriter(JobState $state, string $archivePath, array $enc): ArchiveWriter
     {
         $exists = is_file($archivePath);
 
         if (! $exists) {
-            // First bundle tick.
             $meta = $this->buildMeta($state);
 
             if (! empty($enc['enabled'])) {
@@ -867,7 +750,6 @@ class ExportJob
             return ArchiveWriter::createPlain($archivePath, $meta);
         }
 
-        // Resume.
         if (! empty($enc['enabled'])) {
             $streamState = $state->getBinary('stream_state');
             $buffer = $state->getBinary('stream_buffer') ?? '';
@@ -880,11 +762,7 @@ class ExportJob
         return ArchiveWriter::resumePlain($archivePath);
     }
 
-    /**
-     * Read up to $maxBytes from $sourcePath starting at $offset and
-     * push them through the writer's appendEntryBytes(). Returns the
-     * actual byte count consumed (≤ maxBytes).
-     */
+    /** Retorna quantos bytes foram de fato copiados (≤ $maxBytes). */
     private function streamRange(string $sourcePath, int $offset, int $maxBytes, ArchiveWriter $writer): int
     {
         if ($maxBytes <= 0) return 0;
@@ -930,10 +808,7 @@ class ExportJob
     }
 
     /**
-     * Recursively walk a directory, accumulating files into the manifest
-     * and into $totalBytes. The iterator NEVER descends into a directory
-     * whose basename is in PRUNE_DIR_NAMES (node_modules, .git, etc.) or
-     * whose absolute path appears in $skipDirs.
+     * Não desce em PRUNE_DIR_NAMES nem nos caminhos de $skipDirs.
      *
      * @param list<array{name: string, absolute: string, size: int}> $files
      */
@@ -948,9 +823,7 @@ class ExportJob
                 new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::FOLLOW_SYMLINKS),
                 function (\SplFileInfo $current) use ($skipMap, $pruneMap) {
                     if (isset($skipMap[$current->getPathname()])) return false;
-                    // Skip the directory entirely — the iterator
-                    // checks the filter BEFORE descending, so we
-                    // never enumerate the contents of pruned dirs.
+                    // O filtro roda antes de descer, então o conteúdo nem é listado.
                     if ($current->isDir() && isset($pruneMap[$current->getFilename()])) {
                         return false;
                     }
@@ -978,9 +851,7 @@ class ExportJob
     }
 
     /**
-     * Read the NDJSON manifest written by the scan phase — one file
-     * descriptor per line. Lines that don't decode are skipped rather
-     * than aborting the whole bundle.
+     * Linhas que não decodificam são ignoradas em vez de abortar o bundle.
      *
      * @return list<array{name: string, absolute: string, size: int}>
      */
@@ -1002,9 +873,7 @@ class ExportJob
     private function listTablesSafely(): array
     {
         try {
-            // The table list comes from the SOURCE introspection only;
-            // the target dialect doesn't affect enumeration, so we can
-            // skip wiring it through here.
+            // A lista vem da origem; o dialeto de destino não interfere.
             return (new DatabaseDumper($this->db))->listTables();
         } catch (Throwable) {
             return [];
@@ -1018,32 +887,23 @@ class ExportJob
         $sourceDialect = '';
         try {
             $sourceDialect = Dialect::detect($this->db)->value;
-        } catch (Throwable) { /* leave blank if unknown */ }
+        } catch (Throwable) { /* fica vazio se desconhecido */ }
 
         return [
-            'format_version' => 3, // 2 = source/target dialect tags; 3 = stack snapshot
+            'format_version' => 3, // 2 = dialetos origem/destino; 3 = retrato da stack
             'created_at'     => gmdate('c'),
             'flarum_version' => $this->detectFlarumVersion(),
             'php_version'    => PHP_VERSION,
-            // Retrato da stack desta origem. O import compara com a
-            // dele e recusa restaurar uma stack mais nova sobre uma
-            // mais antiga — ver StackSnapshot::blockingReason().
+            // O import recusa restaurar uma stack mais nova sobre uma mais
+            // antiga (StackSnapshot::blockingReason()).
             StackSnapshot::META_KEY => StackSnapshot::capture(),
             'contents'       => array_keys(array_filter($contents)),
             'source_dialect' => $sourceDialect,
-            // The target the SQL was generated for. Equal to source on
-            // a same-engine backup; differs on a cross-engine
-            // migration (e.g. "I'm on MySQL, restoring to Postgres").
+            // Igual à origem, salvo em migração entre bancos.
             'target_dialect' => $target ?: $sourceDialect,
-            // Source URL goes in the archive header in plain text (not
-            // a secret) so the import side can rewrite occurrences in
-            // the database to the destination server's URL — without
-            // it, a backup imported on a different host would break
-            // every absolute link / redirect / cookie path.
+            // Em claro (não é segredo): o import troca pela URL do destino,
+            // senão links absolutos e cookies quebram em outro host.
             'source_url'     => $this->detectSourceUrl(),
-            // Summary the import UI uses to populate selection
-            // checkboxes (per-section file counts + list of extension
-            // directory names found inside).
             'manifest'       => (array) $state->get('manifest_summary', []),
         ];
     }
@@ -1055,10 +915,7 @@ class ExportJob
         return rtrim($url, '/');
     }
 
-    /**
-     * Normalise the user-provided extension selection to either `true`
-     * (everything), `false` (nothing), or a list of extension ids.
-     */
+    /** Resultado: true (todas), false (nenhuma) ou lista de ids. */
     private function normaliseExtensionSelection(mixed $raw): bool|array
     {
         if (is_bool($raw)) return $raw;

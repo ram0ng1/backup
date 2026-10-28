@@ -19,19 +19,11 @@ use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * `php flarum backup:export` — run a full export to completion in a
- * single process.
+ * `php flarum backup:export` — exportação completa num só processo.
  *
- * Why a CLI path exists at all when the admin UI already does exports:
- * the web flow is deliberately chopped into ~4 MB HTTP "ticks" so a
- * shared-host PHP worker never blows its `max_execution_time` or
- * `memory_limit` mid-backup, and it depends on the browser tab staying
- * open to keep firing ticks. A console invocation has neither
- * constraint — there is no request timeout and no tab to lose — so we
- * just drive `ExportJob::runTick()` in a loop until the job reports
- * `done`. The per-tick byte budget still bounds peak memory, which is
- * why we reuse the exact same job engine rather than writing a second,
- * unbounded dumper.
+ * Usa o mesmo ExportJob da web em loop de `runTick()`: no console não há
+ * timeout de requisição nem aba para manter aberta, e o orçamento de bytes
+ * por tick continua limitando a memória.
  */
 class ExportCommand extends AbstractCommand
 {
@@ -136,8 +128,8 @@ class ExportCommand extends AbstractCommand
     }
 
     /**
-     * Translate the --extensions / --all flags into the permissive
-     * shape ExportJob expects: false (none), true (all), or a list of ids.
+     * Converte --extensions / --all no formato do ExportJob: false (nenhuma),
+     * true (todas) ou lista de ids.
      */
     private function resolveExtensionSelection(bool $all): bool|array
     {
@@ -150,7 +142,7 @@ class ExportCommand extends AbstractCommand
         }
 
         $value = $this->input->getOption('extensions');
-        // `--extensions` with no value → all; `--extensions=a,b` → list.
+        // `--extensions` sem valor → todas; `--extensions=a,b` → lista.
         if ($value === null || $value === '') {
             return true;
         }
@@ -159,13 +151,8 @@ class ExportCommand extends AbstractCommand
     }
 
     /**
-     * Pump runTick() to completion while rendering a single, in-place
-     * status line: a spinner (proves liveness during the long DB-dump
-     * phase, where the byte-percent stays pinned), the percent, and the
-     * job message — which now carries the per-table row counter, so a
-     * huge table visibly advances "1,200,000/3,400,000 rows" instead of
-     * looking frozen. Symfony's ProgressBar throttles itself on
-     * non-decorated output (piped to a file), so this doesn't spam logs.
+     * Roda os ticks até o fim numa linha de status. O spinner mostra que o
+     * processo segue vivo no dump do banco, quando o percentual fica parado.
      */
     private function driveToCompletion(JobState $state): JobState
     {

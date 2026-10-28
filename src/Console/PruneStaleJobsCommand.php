@@ -16,20 +16,16 @@ use Ramon\Backup\StoragePaths;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * `php flarum backup:prune-stale` — delete abandoned export/import
- * staging directories under `storage/backup-tmp`.
+ * `php flarum backup:prune-stale` — apaga staging abandonado em
+ * `storage/backup-tmp`.
  *
- * Why this exists: a finished export deletes its `dump.sql` + manifest
- * but keeps the job dir for one extra tick so the browser can read the
- * terminal status; cleanup of the dir itself relies on the JS firing a
- * DELETE on dismiss. A job that errors out, or a tab closed mid-export,
- * never fires that DELETE — so the dir lingers, and with it a plaintext
- * `dump.sql` (the whole database, password hashes and emails included).
- * Registered on a daily schedule in `extend.php`; also runnable by hand.
+ * Job com erro ou aba fechada no meio nunca dispara o DELETE do painel, e
+ * o diretório fica com um `dump.sql` em texto puro. Agendado diariamente
+ * no `extend.php`.
  */
 class PruneStaleJobsCommand extends AbstractCommand
 {
-    /** Default age threshold, in hours, before a staging dir is pruned. */
+    /** Idade padrão, em horas, para considerar o staging abandonado. */
     private const DEFAULT_HOURS = 24;
 
     public function __construct(
@@ -71,7 +67,6 @@ class PruneStaleJobsCommand extends AbstractCommand
                 $this->output->writeln('<comment>would delete:</comment> '.$dir);
                 continue;
             }
-            // deleteDir refuses to touch anything outside backup-tmp/.
             $this->paths->deleteDir($dir);
             $this->output->writeln('<info>deleted:</info> '.$dir);
             $deleted++;

@@ -24,15 +24,8 @@ use Ramon\Backup\StoragePaths;
 /**
  * POST /api/backup/imports/{id}/inspect
  *
- * Final step of the chunked upload. The staging file should now be
- * complete (size == expected_size from init). We open the archive
- * header WITHOUT decrypting, return is_encrypted + meta, and let the
- * UI decide whether to ask for a private key. The actual restore is
- * still kicked off by /backup/imports/{id}/start.
- *
- * If the staging file is short of the declared size, we refuse —
- * the caller should retry the missing chunks first. Returning a
- * partial inspect would mislead the UI.
+ * Fecha o upload: lê o cabeçalho sem decifrar e diz se o arquivo está
+ * cifrado. Recusa upload menor que o tamanho declarado.
  */
 class InspectImportController implements RequestHandlerInterface
 {
@@ -86,13 +79,9 @@ class InspectImportController implements RequestHandlerInterface
             ]);
         }
 
-        // Stack gate at inspect time — the operator learns the restore
-        // is impossible BEFORE ticking "confirm replace", instead of
-        // after committing. ImportJob re-checks it as the authoritative
-        // backstop for the CLI and for direct API callers that skip
-        // inspect. The staged upload is left in place so a retry after
-        // a PHP upgrade doesn't need a re-upload; PruneStaleJobsCommand
-        // sweeps it if the operator walks away.
+        // Barra aqui o stack incompatível, antes da confirmação; o ImportJob
+        // checa de novo para CLI e chamadas diretas. O upload fica para não
+        // precisar reenviar após atualizar o PHP; o prune limpa depois.
         $blocking = StackSnapshot::blockingReason($archiveMeta);
         if ($blocking !== null) {
             throw new ValidationException(['archive' => $blocking]);

@@ -23,8 +23,7 @@ use Ramon\Backup\StoragePaths;
 /**
  * POST /api/backup/imports/{id}/tick
  *
- * Drives an in-progress restore one tick forward. Same pattern as the
- * export tick endpoint.
+ * Avança a restauração um tick, como o tick da exportação.
  */
 class TickImportController implements RequestHandlerInterface
 {
@@ -50,10 +49,8 @@ class TickImportController implements RequestHandlerInterface
             throw new ValidationException(['id' => 'Import job not found.']);
         }
 
-        // The decryption private key is never persisted to disk; the
-        // client re-sends it on each tick (over HTTPS) so the inspect /
-        // extract phases can decrypt without a plaintext copy ever
-        // touching storage/. Absent (unencrypted archive) → no-op.
+        // A chave privada nunca vai para o disco: o cliente a reenvia a
+        // cada tick. Ausente em arquivo sem criptografia.
         $body = (array) $request->getParsedBody();
         $privateKey = isset($body['private_key']) ? trim((string) $body['private_key']) : '';
         $this->job->withPrivateKey($privateKey !== '' ? $privateKey : null);

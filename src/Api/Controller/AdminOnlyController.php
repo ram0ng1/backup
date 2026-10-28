@@ -16,8 +16,7 @@ use Flarum\User\Exception\PermissionDeniedException;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * Tiny mixin for "admin / backup-manager only" controllers. Keeps the
- * permission check uniform across every endpoint in the extension.
+ * Checagem de permissão comum aos endpoints: admin ou `backup.manage`.
  */
 trait AdminOnlyController
 {

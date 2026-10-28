@@ -22,10 +22,8 @@ use Ramon\Backup\Job\ImportJob;
 /**
  * POST /api/backup/imports/{id}/start
  *
- * The user has reviewed the inspect result, optionally pasted a private
- * key (for encrypted archives whose key isn't in our config.php), and
- * checked the "I understand this will replace my data" box. We create
- * the persisted job state and let the tick endpoint take over.
+ * Cria o estado do job depois que o admin confirmou a substituição dos
+ * dados (e, se preciso, colou a chave privada); o tick assume dali.
  */
 class StartImportController implements RequestHandlerInterface
 {
@@ -56,8 +54,7 @@ class StartImportController implements RequestHandlerInterface
             ]);
         }
 
-        // Selection is optional. When absent we restore everything in
-        // the archive (backwards-compatible with older clients).
+        // Sem seleção, restaura tudo (clientes antigos não a enviam).
         $selection = is_array($body['selection'] ?? null) ? $body['selection'] : null;
 
         $state = $this->job->start(

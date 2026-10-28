@@ -23,9 +23,8 @@ use Ramon\Backup\StoragePaths;
 /**
  * POST /api/backup/exports/{id}/tick
  *
- * Drives an in-progress export forward by one tick (~4 MB of work).
- * Returns the current phase, message, and progress so the frontend can
- * draw its progress bar and decide whether to keep polling.
+ * Avança a exportação um tick (~4 MB de trabalho) e devolve fase e
+ * progresso para o frontend decidir se continua.
  */
 class TickExportController implements RequestHandlerInterface
 {
@@ -59,10 +58,8 @@ class TickExportController implements RequestHandlerInterface
             'message'  => $state->get('message'),
             'progress' => $state->get('progress'),
             'result'   => $state->get('result'),
-            // Lossy-translation notes raised by the introspector while
-            // dumping the schema (unsupported types, generated columns,
-            // etc.). Surfaced verbatim on the completion screen so the
-            // admin sees what didn't survive cross-engine translation.
+            // O que se perdeu na tradução entre bancos (tipos sem
+            // equivalente, colunas geradas); mostrado ao admin no fim.
             'warnings' => $state->get('db_warnings', []),
         ]);
     }

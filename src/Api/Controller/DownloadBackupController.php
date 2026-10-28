@@ -19,35 +19,19 @@ use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
 
 /**
- * Streams a saved backup file to the browser.
+ * Envia um backup salvo ao navegador. O caminho passa por
+ * `StoragePaths::backupFilePath()`, então um filename adulterado no banco
+ * não sai do diretório de backups.
  *
- * Path resolution goes through `StoragePaths::backupFilePath()`,
- * which whitelists the filename pattern and verifies the resolved
- * absolute path lives under the canonical backups directory — so a
- * malicious id that resolves to a row with a tampered filename can't
- * escape.
- *
- * Why we bypass PSR-7 emission for the body:
- *
- *   Wrapping the file in a `Stream` and returning a PSR-7 `Response`
- *   *should* let the framework's SAPI emitter pump bytes through in
- *   chunks. In practice, several middlewares in the Flarum stack
- *   (request/response logging, CORS, CSP) do `(string) $stream`
- *   somewhere along the chain — which materialises the whole body in
- *   memory. With a 1+ GB `.flarum` archive that promptly hits
- *   `memory_limit`, PHP-FPM dies with a 502, and the browser ends up
- *   on `chrome-error://chromewebdata/` (the symptom this fix targets).
- *
- *   So we send headers + body straight to the SAPI output and call
- *   `exit` — no middleware ever gets to read the body. Plain HTTP/1.1
- *   `Range` is honoured so a dropped connection on a multi-GB
- *   download can resume from the last byte transferred.
+ * O corpo vai direto para a saída do SAPI, seguido de `exit`: middlewares
+ * do Flarum fazem `(string) $stream` e carregariam o arquivo inteiro na
+ * memória. Aceita `Range` para retomar downloads grandes.
  */
 class DownloadBackupController implements RequestHandlerInterface
 {
     use AdminOnlyController;
 
-    /** Bytes per `fread`/`echo` cycle. 8 MB balances syscalls vs RAM. */
+    /** Bytes por ciclo de `fread`/`echo`. */
     private const STREAM_CHUNK_BYTES = 8 * 1024 * 1024;
 
     public function __construct(
@@ -68,10 +52,7 @@ class DownloadBackupController implements RequestHandlerInterface
 
         $abs = $this->paths->backupFilePath($backup->filename);
         if ($abs === null || ! is_file($abs)) {
-            // Deliberately generic: don't echo the absolute path or the
-            // (DB-stored, potentially tampered) filename back to the
-            // client — that only aids filesystem-layout recon. The
-            // specifics are available server-side via logs if needed.
+            // Genérico de propósito: não expor caminho nem filename ao cliente.
             throw new ValidationException([
                 'file' => 'Backup file is not available.',
             ]);
@@ -84,22 +65,18 @@ class DownloadBackupController implements RequestHandlerInterface
     }
 
     /**
-     * Stream the (possibly partial) file body straight to the SAPI
-     * output and `exit`. After this call, no further middleware runs
-     * and PHP-FPM doesn't try to materialise the response body.
+     * Escreve o arquivo (ou a faixa pedida) direto na saída e encerra; nenhum
+     * middleware roda depois.
      *
-     * @param array{0:int,1:int}|null $range  Byte range [first, last] inclusive, or null for whole file.
+     * @param array{0:int,1:int}|null $range  Faixa [primeiro, último] inclusiva, ou null para o arquivo todo.
      */
     private function emitFile(string $abs, int $size, ?array $range, string $filename): never
     {
-        // Drain any output buffers Flarum / middlewares started.
-        // Without this, every fread/echo gets buffered (defeats the
-        // chunked-emit purpose) and may also crash on memory_limit.
+        // Buffers abertos pelo Flarum acumulariam o arquivo inteiro na memória.
         while (ob_get_level() > 0) { @ob_end_clean(); }
 
-        // Long downloads may run for many minutes on slow links;
-        // ignore_user_abort is intentionally OFF so a closed tab
-        // stops the script immediately and frees the FPM worker.
+        // Sem limite de tempo, mas sem ignore_user_abort: aba fechada
+        // encerra o script e libera o worker do FPM.
         @set_time_limit(0);
 
         if ($range === null) {
@@ -113,10 +90,7 @@ class DownloadBackupController implements RequestHandlerInterface
             $contentLength = $end - $start + 1;
         }
 
-        // Headers must precede the first byte of body — at this point
-        // ob is closed, so each header() goes out as soon as we send
-        // the first byte. Quote the filename to survive spaces / non-
-        // ASCII (RFC 5987 'filename*' covers UTF-8 properly).
+        // `filename*` (RFC 5987) leva o nome em UTF-8; `filename` fica em ASCII.
         $safeAscii = preg_replace('/[^A-Za-z0-9._-]/', '_', $filename);
         $utf8      = rawurlencode($filename);
 
@@ -127,12 +101,8 @@ class DownloadBackupController implements RequestHandlerInterface
         header('Accept-Ranges: bytes');
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: no-store');
-        // nginx (the most common reverse proxy in front of Flarum)
-        // buffers proxied responses to disk by default. With a multi-
-        // GB body that means a long pause at the start, and an even
-        // longer one at the end before bytes reach the browser. This
-        // header asks nginx to passthrough chunks as PHP emits them.
-        // Apache + most other servers ignore the header harmlessly.
+        // Sem isto o nginx bufferiza a resposta inteira em disco antes de
+        // repassar; outros servidores ignoram o header.
         header('X-Accel-Buffering: no');
         if ($status === 206) {
             header(sprintf('Content-Range: bytes %d-%d/%d', $start, $end, $size));
@@ -140,16 +110,14 @@ class DownloadBackupController implements RequestHandlerInterface
 
         $fh = @fopen($abs, 'rb');
         if ($fh === false) {
-            // Headers already flushed — best we can do is end the
-            // connection cleanly. The browser will treat it as a
-            // truncated download and (because we set Accept-Ranges)
-            // can retry the missing range.
+            // Headers já enviados: só resta encerrar. Com Accept-Ranges o
+            // navegador pode pedir o que faltou.
             exit;
         }
 
         try {
             if ($start > 0 && fseek($fh, $start) !== 0) {
-                exit; // could not seek — give up cleanly
+                exit;
             }
 
             $remaining = $contentLength;
@@ -173,12 +141,8 @@ class DownloadBackupController implements RequestHandlerInterface
     }
 
     /**
-     * Parse a single-range `Range: bytes=START-END` header. Returns
-     * `[start, end]` (inclusive) or null when the header is absent /
-     * malformed / unsatisfiable. Multi-range requests are intentionally
-     * not supported — they require multipart/byteranges responses,
-     * which add complexity for marginal benefit on a single big
-     * archive download.
+     * Lê `Range: bytes=INÍCIO-FIM` de faixa única; null se ausente, inválido
+     * ou impossível. Múltiplas faixas (multipart/byteranges) não são aceitas.
      *
      * @return array{0:int,1:int}|null
      */
@@ -193,7 +157,7 @@ class DownloadBackupController implements RequestHandlerInterface
         if ($startStr === '' && $endStr === '') return null;
 
         if ($startStr === '') {
-            // Suffix range "-N" = last N bytes.
+            // "-N" são os últimos N bytes.
             $suffix = (int) $endStr;
             if ($suffix <= 0) return null;
             $start = max(0, $size - $suffix);
