@@ -76,6 +76,22 @@ final class Engines
         self::capsule()->bootEloquent();
     }
 
+    /**
+     * Conexão nova a cada chamada, como cada tick HTTP do import recebe.
+     * Estado de sessão (`SET ...`) não passa de uma para outra.
+     */
+    public static function freshConnection(string $dialect): ?Connection
+    {
+        if (self::connection($dialect) === null) {
+            return null;
+        }
+
+        $name = $dialect.'_fresh_'.bin2hex(random_bytes(4));
+        self::capsule()->addConnection(self::configFor($dialect), $name);
+
+        return self::capsule()->getConnection($name);
+    }
+
     /** Point Eloquent's default connection at a given engine. */
     public static function setDefaultConnection(string $dialect): void
     {
@@ -95,20 +111,24 @@ final class Engines
 
     private static function make(string $dialect): Connection
     {
-        $config = match ($dialect) {
+        $capsule = self::capsule();
+        // Re-add each call is cheap and lets us reuse the same manager
+        // across the suite without leaking state between named conns.
+        $capsule->addConnection(self::configFor($dialect), $dialect);
+
+        return $capsule->getConnection($dialect);
+    }
+
+    /** @return array<string, mixed> */
+    private static function configFor(string $dialect): array
+    {
+        return match ($dialect) {
             'sqlite'   => self::sqliteConfig(),
             'mysql'    => self::serverConfig('mysql', 'mysql', 3306),
             'mariadb'  => self::serverConfig('mariadb', 'mariadb', 3306),
             'postgres' => self::serverConfig('postgres', 'pgsql', 5432),
             default    => throw new \InvalidArgumentException("Unknown engine: $dialect"),
         };
-
-        $capsule = self::capsule();
-        // Re-add each call is cheap and lets us reuse the same manager
-        // across the suite without leaking state between named conns.
-        $capsule->addConnection($config, $dialect);
-
-        return $capsule->getConnection($dialect);
     }
 
     private static function sqliteConfig(): array

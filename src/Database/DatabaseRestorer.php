@@ -118,6 +118,28 @@ class DatabaseRestorer
     }
 
     /**
+     * Estado de sessão que o preâmbulo do dump ajusta, reaplicado no começo
+     * de cada tick: pela web cada tick abre uma conexão nova, e o preâmbulo
+     * só roda no primeiro. Sem `standard_conforming_strings = on` uma barra
+     * invertida no conteúdo de um post fecha o literal no PostgreSQL; sem
+     * `NO_AUTO_VALUE_ON_ZERO` um id 0 vira o próximo auto-increment.
+     *
+     * Não é best-effort como a troca de FK: se o ajuste falhar, o restore
+     * para em vez de seguir com literais lidos de outro jeito.
+     */
+    public static function prepareSession(Connection $db): void
+    {
+        match (Dialect::detect($db)) {
+            Dialect::MYSQL,
+            Dialect::MARIADB  => $db->unprepared("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'"),
+            Dialect::POSTGRES => $db->unprepared('SET standard_conforming_strings = on'),
+            Dialect::SQLITE   => null,
+        };
+
+        self::disableForeignKeys($db);
+    }
+
+    /**
      * Best-effort "suspend FK enforcement for this connection". Engine
      * matrix:
      *   - MySQL/MariaDB: `SET FOREIGN_KEY_CHECKS = 0`

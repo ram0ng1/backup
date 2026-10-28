@@ -675,14 +675,10 @@ class ImportJob
             return;
         }
 
-        // Each tick opens a fresh PDO connection, so any session-level
-        // FK toggle from the previous tick is gone. We also can't rely
-        // on the dump's own preamble — even though it's emitted as a
-        // separate statement, an FK violation mid-batch would still
-        // abort. Disable explicitly at the start of every tick that
-        // runs SQL; re-enable when we cross EOF below. The helper
-        // picks the right syntax for the destination engine.
-        DatabaseRestorer::disableForeignKeys($this->db);
+        // Cada tick abre uma conexão nova: o estado de sessão do preâmbulo
+        // (FK desligada, modo de strings, NO_AUTO_VALUE_ON_ZERO) é refeito
+        // aqui, e a FK volta a ser ligada quando o dump termina.
+        DatabaseRestorer::prepareSession($this->db);
 
         $size = filesize($paths['dump']) ?: 0;
         $offset = (int) $cursor['restore_offset'];
