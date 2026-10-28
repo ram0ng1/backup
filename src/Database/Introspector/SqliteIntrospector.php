@@ -161,7 +161,8 @@ class SqliteIntrospector implements SchemaIntrospector
         if ($declared === '') return ColumnType::TEXT;
 
         if (str_contains($declared, 'BIGINT')) return ColumnType::BIGINT;
-        if (str_contains($declared, 'BOOL'))   return ColumnType::BOOL;
+        // `tinyint(1)` é como o Laravel declara booleano no SQLite.
+        if (str_contains($declared, 'BOOL') || preg_match('/\ATINYINT\s*\(\s*1\s*\)/', $declared)) return ColumnType::BOOL;
         if (preg_match('/INT/', $declared))    return ColumnType::INTEGER;
 
         if (preg_match('/CHAR|CLOB|TEXT/', $declared)) {
