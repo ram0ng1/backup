@@ -194,8 +194,10 @@ class ImportJob
             'cursor' => [
                 'bytes_read'        => 0,
                 'restore_offset'    => 0,
+                // Entrada que o tick anterior deixou pela metade, e o
+                // tamanho do dump.sql que ele confirmou.
                 'current_entry'     => null,
-                'current_offset'    => 0,
+                'dump_bytes'        => 0,
                 'extract_done'      => false,
                 // Persisted reader position (file offset + secretstream
                 // pull state) so each extract tick resumes in place
@@ -361,47 +363,68 @@ class ImportJob
             $selection = $opts['selection'] ?? null;
 
             $budget = self::BUDGET_BYTES;
-            $dumpFh = fopen($paths['dump'], 'ab');
+
+            /*
+             * O dump.sql volta ao tamanho registrado no último tick salvo:
+             * um tick que morreu no meio (timeout) e roda de novo regravaria
+             * os mesmos bytes no fim do arquivo.
+             */
+            $dumpFh = fopen($paths['dump'], 'cb');
             if ($dumpFh === false) {
                 throw new RuntimeException('Could not open dump.sql for write.');
             }
+            if (isset($cursor['dump_bytes'])) {
+                ftruncate($dumpFh, (int) $cursor['dump_bytes']);
+            }
+            fseek($dumpFh, 0, SEEK_END);
 
             try {
                 while ($budget > 0) {
-                    $entry = $reader->nextEntry();
-                    if ($entry === null) {
-                        $cursor['extract_done'] = true;
-                        break;
+                    $current = $cursor['current_entry'] ?? null;
+                    $resuming = is_array($current);
+
+                    if (! $resuming) {
+                        $entry = $reader->nextEntry();
+                        if ($entry === null) {
+                            $cursor['extract_done'] = true;
+                            break;
+                        }
+
+                        $accept = $this->shouldExtract($entry['name'], $entry['type'], $selection);
+                        $dest = ($accept && $entry['type'] === Format::TYPE_FILE)
+                            ? $this->resolveDestination($entry['name'], $state)
+                            : null;
+
+                        $current = [
+                            'name'        => $entry['name'],
+                            'type'        => $entry['type'],
+                            'remaining'   => $entry['length'],
+                            'accept'      => $accept,
+                            'dest'        => $dest,
+                            // Aceita na seleção mas sem destino resolvível (id
+                            // de extensão fora do mapa do manifesto, raiz não
+                            // permitida). Os bytes são drenados igual, mas isso
+                            // é perda de dado — nunca pode passar por "extraído".
+                            'unresolved'  => $accept && $entry['type'] === Format::TYPE_FILE && $dest === null,
+                            'write_error' => null,
+                        ];
                     }
-
-                    $accept = $this->shouldExtract($entry['name'], $entry['type'], $selection);
-                    $dest = ($accept && $entry['type'] === Format::TYPE_FILE)
-                        ? $this->resolveDestination($entry['name'], $state)
-                        : null;
-
-                    // Aceita na seleção mas sem destino resolvível (id
-                    // de extensão fora do mapa do manifesto, raiz não
-                    // permitida). Os bytes são drenados igual, mas isso
-                    // é perda de dado — nunca pode passar por "extraído".
-                    $unresolved = $accept
-                        && $entry['type'] === Format::TYPE_FILE
-                        && $dest === null;
 
                     // Open a sink: SQL dump file, target file on disk,
                     // or null (drain into the void). We always consume
                     // the bytes — skipping just means not writing them.
+                    // Uma entrada retomada continua o arquivo em append.
                     $sinkFh = null;
-                    $writeError = null;
-                    if ($accept && $entry['type'] === Format::TYPE_DB_DUMP) {
+                    $writeError = $current['write_error'];
+                    if ($current['accept'] && $current['type'] === Format::TYPE_DB_DUMP) {
                         $sinkFh = $dumpFh;
-                    } elseif ($accept && $dest !== null) {
-                        $sinkFh = $this->openDestination($dest, $writeError);
+                    } elseif ($current['accept'] && $current['dest'] !== null && $writeError === null) {
+                        $sinkFh = $this->openDestination($current['dest'], $writeError, $resuming ? 'ab' : 'wb');
                     }
 
                     try {
-                        $remaining = $entry['length'];
-                        while ($remaining > 0) {
-                            $want = (int) min(Format::CHUNK_SIZE, $remaining);
+                        while ($current['remaining'] > 0 && $budget > 0) {
+                            $want = (int) min(Format::CHUNK_SIZE, $current['remaining'], $budget);
                             $chunk = $reader->readEntryBytes($want);
                             if ($sinkFh !== null && $sinkFh !== $dumpFh) {
                                 $written = @fwrite($sinkFh, $chunk);
@@ -426,8 +449,9 @@ class ImportJob
                                     );
                                 }
                             }
-                            $remaining -= strlen($chunk);
+                            $current['remaining'] -= strlen($chunk);
                             $progress['processed_bytes'] += strlen($chunk);
+                            $budget -= strlen($chunk);
                         }
                     } finally {
                         if ($sinkFh !== null && $sinkFh !== $dumpFh) {
@@ -435,19 +459,30 @@ class ImportJob
                         }
                     }
 
-                    if ($unresolved) {
+                    $current['write_error'] = $writeError;
+
+                    if ($current['remaining'] > 0) {
+                        // Orçamento acabou no meio da entrada: o próximo tick continua dela.
+                        $cursor['current_entry'] = $current;
+                        break;
+                    }
+                    $cursor['current_entry'] = null;
+
+                    if ($current['unresolved']) {
                         $progress['unresolved_entries']++;
-                        $this->noteUnresolved($state, (string) $entry['name']);
+                        $this->noteUnresolved($state, (string) $current['name']);
                     } elseif ($writeError !== null) {
                         $progress['unwritable_entries']++;
-                        $this->noteUnwritable($state, (string) $dest, $writeError);
-                    } elseif ($accept) {
+                        $this->noteUnwritable($state, (string) $current['dest'], $writeError);
+                    } elseif ($current['accept']) {
                         $progress['extracted_entries']++;
                     } else {
                         $progress['skipped_entries']++;
                     }
-                    $budget -= $entry['length'];
                 }
+
+                fflush($dumpFh);
+                $cursor['dump_bytes'] = (int) ftell($dumpFh);
             } finally {
                 fclose($dumpFh);
             }
@@ -1026,9 +1061,10 @@ class ImportJob
      * são graváveis. A entrada perdida é contada e vira aviso no fim.
      *
      * @param  string|null  $reason  Preenchido com o erro do SO quando falha.
+     * @param  string       $mode    `ab` quando a entrada continua de um tick anterior.
      * @return resource|null
      */
-    private function openDestination(string $dest, ?string &$reason)
+    private function openDestination(string $dest, ?string &$reason, string $mode = 'wb')
     {
         $dir = dirname($dest);
         if (! is_dir($dir)) {
@@ -1040,7 +1076,7 @@ class ImportJob
         }
 
         error_clear_last();
-        $fh = @fopen($dest, 'wb');
+        $fh = @fopen($dest, $mode);
         if ($fh === false) {
             $reason = $this->lastErrorMessage() ?? 'fopen recusou o destino';
             return null;

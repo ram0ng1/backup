@@ -174,6 +174,10 @@ class ArchiveReader
         $typeByte = $this->readPlain(1);
         $lenRaw = $this->readPlain(8);
         $length = unpack('J', $lenRaw)[1];
+        // Acima de 2^63 o `J` volta negativo e o leitor pularia a entrada.
+        if ($length < 0) {
+            throw new RuntimeException('Entry length is implausible.');
+        }
 
         return [
             'name'   => $name,
