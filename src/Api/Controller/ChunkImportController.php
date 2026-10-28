@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Flarum\Foundation\ValidationException;
@@ -7,53 +16,45 @@ use Laminas\Diactoros\Response\JsonResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
  * POST /api/backup/imports/{id}/chunk
  *
- * Append a single chunk of the .flarum archive to the staging file.
- *
- * The chunk's byte offset within the final file is given via the
- * `X-Chunk-Offset` request header. The body is the raw chunk payload
- * (`Content-Type: application/octet-stream`). Same offset on retry
- * is idempotent — we seek + overwrite, so a flaky network can resend
- * a chunk without corrupting earlier or later bytes.
- *
- * Response: `{ received, expected }` — total bytes now staged vs the
- * size declared at /backup/imports init time. The frontend uses these
- * for the progress bar and to decide when to call /inspect.
+ * Grava uma parte do arquivo no offset do header `X-Chunk-Offset`; o corpo
+ * são os bytes crus. Reenviar o mesmo offset sobrescreve, então repetir é
+ * seguro. Responde `{ received, expected }` para a barra de progresso.
  */
 class ChunkImportController implements RequestHandlerInterface
 {
     use AdminOnlyController;
 
     /**
-     * Per-chunk hard cap. Slightly larger than the recommended chunk
-     * size so a slow / mismatched client sending a one-shot bigger
-     * chunk doesn't immediately fail; but small enough that one
-     * chunk never strains memory_limit during framework parsing.
+     * Teto por requisição: folga sobre o tamanho recomendado, mas pequeno o
+     * bastante para não pesar no memory_limit.
      */
     private const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         $jobId = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $jobId)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $offsetHeader = trim($request->getHeaderLine('X-Chunk-Offset'));
         if ($offsetHeader === '' || ! preg_match('/^\d+$/', $offsetHeader)) {
             throw new ValidationException([
-                'chunk' => 'Missing or invalid X-Chunk-Offset header.',
+                'chunk' => $this->messages->get('errors.bad_offset_header'),
             ]);
         }
         $offset = (int) $offsetHeader;
@@ -64,33 +65,38 @@ class ChunkImportController implements RequestHandlerInterface
 
         if (! is_file($dest)) {
             throw new ValidationException([
-                'chunk' => 'Upload session not initialised — call POST /backup/imports first.',
+                'chunk' => $this->messages->get('errors.upload_not_initialised'),
             ]);
         }
 
         $expected = (int) ($meta['expected_size'] ?? 0);
+        // Sem tamanho declarado não há limite; e o preenchimento com zeros
+        // abaixo grava bytes reais até o offset, antes de ler o corpo.
+        if ($expected <= 0 || $offset >= $expected) {
+            throw new ValidationException([
+                'chunk' => $this->messages->get('errors.offset_out_of_range'),
+            ]);
+        }
 
-        // Stream the request body straight to disk in fixed-size
-        // reads so we never hold more than 64 KB of the chunk in
-        // memory regardless of the chunk's total size.
+        // Lê em blocos de 64 KB para não segurar a parte inteira na memória.
         $body = $request->getBody();
         $body->rewind();
 
         if ($this->ensureFileSize($dest, $offset) === false) {
             throw new ValidationException([
-                'chunk' => 'Failed to position staging file at offset '.$offset.'.',
+                'chunk' => $this->messages->get('errors.seek_failed', ['offset' => $offset]),
             ]);
         }
 
-        $fh = @fopen($dest, 'cb'); // c = open for read+write, don't truncate, create if missing
+        $fh = @fopen($dest, 'cb'); // 'c' não trunca o arquivo
         if ($fh === false) {
-            throw new ValidationException(['chunk' => 'Could not open staging file.']);
+            throw new ValidationException(['chunk' => $this->messages->get('errors.open_staging_failed')]);
         }
 
         try {
             if (fseek($fh, $offset) !== 0) {
                 throw new ValidationException([
-                    'chunk' => 'Failed to seek to offset '.$offset.' in staging file.',
+                    'chunk' => $this->messages->get('errors.seek_failed', ['offset' => $offset]),
                 ]);
             }
 
@@ -102,22 +108,19 @@ class ChunkImportController implements RequestHandlerInterface
                 $written += strlen($piece);
                 if ($written > self::MAX_CHUNK_BYTES) {
                     throw new ValidationException([
-                        'chunk' => sprintf(
-                            'Chunk exceeds per-request limit (%d bytes).',
-                            self::MAX_CHUNK_BYTES
-                        ),
+                        'chunk' => $this->messages->get('errors.chunk_too_large', ['max' => self::MAX_CHUNK_BYTES]),
                     ]);
                 }
-                if ($expected > 0 && $offset + $written > $expected) {
+                if ($offset + $written > $expected) {
                     throw new ValidationException([
-                        'chunk' => 'Chunk would write past the declared upload size.',
+                        'chunk' => $this->messages->get('errors.chunk_past_end'),
                     ]);
                 }
 
                 $bytes = fwrite($fh, $piece);
                 if ($bytes === false || $bytes !== strlen($piece)) {
                     throw new ValidationException([
-                        'chunk' => 'Write failed at offset '.($offset + $written - strlen($piece)).' — disk full?',
+                        'chunk' => $this->messages->get('errors.write_failed', ['offset' => $offset + $written - strlen($piece)]),
                     ]);
                 }
             }
@@ -125,6 +128,7 @@ class ChunkImportController implements RequestHandlerInterface
             fclose($fh);
         }
 
+        clearstatcache(true, $dest);
         $received = filesize($dest) ?: 0;
         return new JsonResponse([
             'received' => $received,
@@ -144,9 +148,8 @@ class ChunkImportController implements RequestHandlerInterface
     }
 
     /**
-     * Pre-create / pre-extend the staging file to at least `$offset`
-     * bytes. Without this, fseek on a `cb`-mode handle won't grow the
-     * file, and writes can land at the wrong offset.
+     * Garante o arquivo com pelo menos `$offset` bytes; fseek em modo `cb`
+     * não estende o arquivo e a escrita cairia no lugar errado.
      */
     private function ensureFileSize(string $path, int $offset): int|false
     {
@@ -155,9 +158,7 @@ class ChunkImportController implements RequestHandlerInterface
         if ($size === false) return false;
         if ($size >= $offset) return $size;
 
-        // Extend with zero bytes up to the offset. We rarely take this
-        // path — only when chunks arrive out of order, which the client
-        // doesn't normally do but is allowed by the protocol.
+        // Só acontece com partes fora de ordem, que o protocolo permite.
         $fh = @fopen($path, 'ab');
         if ($fh === false) return false;
         try {

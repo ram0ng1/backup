@@ -1,38 +1,27 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Archive;
 
 use Ramon\Backup\Crypto\BackupCipher;
 use RuntimeException;
 
 /**
- * Streaming reader for `.flarum` archives.
+ * Leitor em streaming de arquivos `.flarum`, par do `ArchiveWriter`.
  *
- * Symmetric counterpart to `ArchiveWriter`. Designed to expose entries
- * one at a time so the importer can stage them through a chunked-tick
- * progress flow without ever loading the whole archive into memory.
- *
- * Lifecycle:
- *   - openHeader($path)        — read magic + meta JSON. Tells you whether
- *                                the archive is encrypted (and you need
- *                                to provide a private key) without
- *                                committing to any further parsing.
- *   - prepare($pathOrKey)      — second step, only if encrypted:
- *                                unwrap the symmetric key and consume
- *                                the secretstream init header. After
- *                                this, the reader is positioned at the
- *                                first encrypted chunk.
- *   - nextEntry()              — yields {name, type, length, stream}.
- *                                The `stream` is a callable readNBytes()
- *                                so the importer can pull payload bytes
- *                                in its own chunks without seeking.
- *
- * Resumability is shallower than the writer's: import ticks open the
- * file, fast-forward to the entry+offset they were processing, and
- * continue. We persist `(offset_in_archive, entry_remaining)` between
- * ticks; on resume we re-decrypt from the last secretstream chunk
- * boundary we recorded. Decryption state IS serializable just like on
- * the write side.
+ * Entrega uma entrada por vez para o import trabalhar em ticks sem
+ * carregar o arquivo inteiro na memória. Arquivo cifrado exige
+ * `prepareEncrypted()` depois de `openHeader()`. O estado do secretstream
+ * é serializável, então cada tick retoma do ponto salvo em vez de
+ * decifrar tudo de novo desde o início.
  */
 class ArchiveReader
 {
@@ -44,21 +33,25 @@ class ArchiveReader
 
     private bool $encrypted;
 
-    /** Offset in the file just past the file header (== start of body). */
+    /** Offset logo depois do cabeçalho (início do corpo). */
     private int $bodyStart = 0;
 
-    /** Current logical offset within the decrypted entry stream. */
+    /** Posição lógica no stream de entradas já decifrado. */
     private int $entryStreamPos = 0;
 
-    /** libsodium secretstream pull state — only set for encrypted archives. */
+    /** Estado do secretstream (pull); só em arquivos cifrados. */
     private ?string $streamState = null;
 
-    /** Plaintext bytes already pulled from secretstream but not yet consumed. */
+    /** Texto claro já decifrado e ainda não consumido. */
     private string $plainBuffer = '';
 
-    /** Has the secretstream pull seen a FINAL tag? */
+    /** O pull já viu a tag FINAL. */
     private bool $streamExhausted = false;
 
+    /**
+     * @param resource $fh
+     * @param array<string, mixed> $meta
+     */
     private function __construct($fh, bool $encrypted, array $meta, int $bodyStart)
     {
         $this->fh = $fh;
@@ -68,9 +61,8 @@ class ArchiveReader
     }
 
     /**
-     * Read the header without committing to decryption. Returns a
-     * partially-initialised reader; for encrypted archives you must call
-     * `prepareEncrypted($privateKeyB64)` next.
+     * Lê só o cabeçalho, sem decifrar nada. Em arquivo cifrado, chame
+     * `prepareEncrypted()` em seguida.
      */
     public static function openHeader(string $path): self
     {
@@ -126,9 +118,8 @@ class ArchiveReader
     }
 
     /**
-     * Consume the wrapped key + secretstream init header, leaving the
-     * reader positioned at the first encrypted chunk. `$privateKeyB64`
-     * is optional — when null we use the configured config.php key.
+     * Desembrulha a chave e consome o cabeçalho do secretstream. Sem
+     * `$privateKeyB64`, usa a chave do config.php.
      */
     public function prepareEncrypted(BackupCipher $cipher, ?string $privateKeyB64): void
     {
@@ -151,8 +142,7 @@ class ArchiveReader
     }
 
     /**
-     * Pull the next entry header from the entry stream. Returns null
-     * when the zero-length terminator is encountered.
+     * Cabeçalho da próxima entrada, ou null no terminador de nome vazio.
      *
      * @return array{name: string, type: int, length: int}|null
      */
@@ -170,6 +160,10 @@ class ArchiveReader
         $typeByte = $this->readPlain(1);
         $lenRaw = $this->readPlain(8);
         $length = unpack('J', $lenRaw)[1];
+        // Acima de 2^63 o `J` volta negativo e o leitor pularia a entrada.
+        if ($length < 0) {
+            throw new RuntimeException('Entry length is implausible.');
+        }
 
         return [
             'name'   => $name,
@@ -179,9 +173,8 @@ class ArchiveReader
     }
 
     /**
-     * Read up to $bytes of the current entry's payload. The caller is
-     * expected to have read exactly `length` total bytes since the last
-     * `nextEntry()` call before invoking it again.
+     * O chamador precisa ler exatamente `length` bytes da entrada antes de
+     * chamar `nextEntry()` de novo: não há como pular o resto.
      */
     public function readEntryBytes(int $bytes): string
     {
@@ -197,10 +190,8 @@ class ArchiveReader
     }
 
     /**
-     * Snapshot enough state to resume the next tick exactly where this
-     * one stopped — without re-reading (and, for encrypted archives,
-     * re-decrypting) every earlier entry from the start. `stream_state`
-     * is null for plaintext archives.
+     * Estado para o próximo tick continuar daqui sem reler (e redecifrar)
+     * as entradas anteriores. `stream_state` é null em arquivo sem cifra.
      *
      * @return array{fpos: int, entry_stream_pos: int, stream_state: ?string, plain_buffer: string, stream_exhausted: bool}
      */
@@ -216,11 +207,9 @@ class ArchiveReader
     }
 
     /**
-     * Resume a reader from a prior tick's `serializeState()` snapshot.
-     * Call this right after `openHeader()`, INSTEAD of
-     * `prepareEncrypted()`: the persisted secretstream state already
-     * encodes the unwrapped symmetric key, so the private key is not
-     * needed (and not consulted) on resume.
+     * Retoma de um `serializeState()`. Chame logo após `openHeader()`, NO
+     * LUGAR de `prepareEncrypted()`: o estado salvo já carrega a chave
+     * simétrica, então a chave privada não é consultada.
      *
      * @param array{fpos?: int|null, entry_stream_pos?: int, stream_state?: ?string, plain_buffer?: string, stream_exhausted?: bool} $state
      */
@@ -244,10 +233,7 @@ class ArchiveReader
         }
     }
 
-    /**
-     * Read $bytes of plaintext, pulling and decrypting more secretstream
-     * chunks as needed.
-     */
+    /** Decifra mais chunks do secretstream conforme a leitura pede. */
     private function readPlain(int $bytes): string
     {
         if (! $this->encrypted) {

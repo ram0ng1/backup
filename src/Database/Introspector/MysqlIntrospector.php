@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Database\Introspector;
 
 use Illuminate\Database\Connection;
@@ -12,16 +21,12 @@ use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
 /**
- * Reads schema from a live MySQL/MariaDB connection. Uses
- * `information_schema` so it works regardless of `SHOW CREATE TABLE`
- * permission quirks across managed hosts.
+ * Lê o schema de MySQL/MariaDB por `information_schema`, que funciona
+ * mesmo onde hosts gerenciados restringem `SHOW CREATE TABLE`.
  *
- * MariaDB caveat: since 10.2.7, MariaDB returns COLUMN_DEFAULT as the
- * raw SQL expression string — string literals come wrapped in single
- * quotes (`'foo'`), and a NULL default is returned as the literal
- * four-character string `"NULL"`. MySQL still returns actual NULL and
- * a bare string. We normalise both shapes in `normaliseDefault()` so
- * downstream code sees the same neutral form regardless of source.
+ * Desde a 10.2.7 o MariaDB devolve COLUMN_DEFAULT como expressão SQL
+ * (strings entre aspas, NULL como o texto `"NULL"`); `normaliseDefault()`
+ * deixa as duas formas iguais.
  */
 class MysqlIntrospector implements SchemaIntrospector
 {
@@ -92,16 +97,10 @@ class MysqlIntrospector implements SchemaIntrospector
             $unsigned  = str_contains($colType, 'unsigned');
             $columnName = (string) $r['COLUMN_NAME'];
 
-            // Generated (computed) columns store an expression evaluated
-            // server-side. We can copy the materialised values (PG/SQLite
-            // see them as plain columns), but the expression itself only
-            // makes sense to MySQL/MariaDB and is dropped by the emitters,
-            // so warn the admin. Detection MUST use GENERATION_EXPRESSION,
-            // not EXTRA: on MySQL 8 a plain `DEFAULT CURRENT_TIMESTAMP`
-            // column reports EXTRA `DEFAULT_GENERATED` — which contains the
-            // substring "generated" and used to trip a false positive on
-            // every `created_at`. GENERATION_EXPRESSION is non-empty ONLY
-            // for real VIRTUAL/STORED generated columns.
+            // Coluna gerada: os valores materializados são copiados, mas a expressão
+            // só vale no MySQL/MariaDB e os emitters a descartam, então avisa o admin.
+            // Detecta por GENERATION_EXPRESSION, não por EXTRA: no MySQL 8 um
+            // `DEFAULT CURRENT_TIMESTAMP` aparece em EXTRA como `DEFAULT_GENERATED`.
             $generationExpr = trim((string) ($r['GENERATION_EXPRESSION'] ?? ''));
             if ($generationExpr !== '') {
                 $this->warnings[] = sprintf(
@@ -121,7 +120,6 @@ class MysqlIntrospector implements SchemaIntrospector
 
             $onUpdate = null;
             if (str_contains($extra, 'on update')) {
-                // EXTRA looks like "on update CURRENT_TIMESTAMP"
                 $onUpdate = trim(substr($extra, strpos($extra, 'on update') + 9));
                 $onUpdate = strtoupper($onUpdate);
             }
@@ -146,25 +144,12 @@ class MysqlIntrospector implements SchemaIntrospector
     }
 
     /**
-     * Normalise `information_schema.COLUMNS.COLUMN_DEFAULT` into a
-     * (literalValue|null, isExpression) pair that the rest of the
-     * pipeline expects.
+     * Normaliza `COLUMN_DEFAULT` para (valor|null, éExpressão).
      *
-     * Three sources to reconcile:
-     *
-     *   - MySQL ≤ 8.0: returns actual NULL for "no default" and the
-     *     raw literal (`foo`, `0`, `CURRENT_TIMESTAMP`) for everything
-     *     else — no quoting.
-     *
-     *   - MariaDB ≥ 10.2.7: returns the SQL expression text. NULL
-     *     defaults come back as the four-char string `"NULL"`; string
-     *     literals come wrapped in single quotes (`'foo'`, with
-     *     embedded `''` doubling SQL-style). Expression defaults
-     *     (CURRENT_TIMESTAMP, NOW(), arithmetic) come unquoted.
-     *
-     *   - "no default" on a nullable column: MySQL returns SQL NULL,
-     *     MariaDB returns the string `"NULL"`. Both should map to
-     *     PHP null with no expression flag.
+     * MySQL ≤ 8.0 devolve NULL para "sem default" e o literal cru, sem aspas.
+     * MariaDB ≥ 10.2.7 devolve o texto da expressão: NULL vira `"NULL"`,
+     * strings vêm entre aspas simples (com `''` dobrado) e expressões como
+     * CURRENT_TIMESTAMP vêm sem aspas.
      *
      * @return array{0: string|null, 1: bool}
      */
@@ -174,28 +159,31 @@ class MysqlIntrospector implements SchemaIntrospector
 
         $s = (string) $raw;
 
-        // MariaDB encodes "no default" as the literal text `NULL`.
+        // MariaDB: "sem default" chega como o texto `NULL`.
         if ($this->isMariaDb && $s === 'NULL') return [null, false];
 
-        // MariaDB-quoted string literal: peel one layer of single
-        // quotes and undo the SQL-style `''` doubling. MySQL ≤ 8.0
-        // never wraps with quotes, so this branch is MariaDB-only.
+        // String com aspas, só no MariaDB: tira uma camada e desfaz o `''`.
         if ($this->isMariaDb && strlen($s) >= 2 && $s[0] === "'" && substr($s, -1) === "'") {
             $inner = substr($s, 1, -1);
             return [str_replace("''", "'", $inner), false];
         }
 
-        // Recognised time-of-row expressions — flagged so the emitter
-        // renders them unquoted (CURRENT_TIMESTAMP, not 'CURRENT_TIMESTAMP').
+        // Sem aspas no emitter: CURRENT_TIMESTAMP, não 'CURRENT_TIMESTAMP'. O
+        // MariaDB escreve `current_timestamp()`, forma que o PostgreSQL e o
+        // SQLite recusam; todas viram a palavra-chave do padrão SQL.
         $upper = strtoupper($s);
-        if (in_array($upper, ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME'], true)) {
-            return [$upper, true];
+        if (preg_match('/\A(CURRENT_TIMESTAMP|NOW|LOCALTIMESTAMP)(\(\d*\))?\z/', $upper)) {
+            return ['CURRENT_TIMESTAMP', true];
+        }
+        if (preg_match('/\A(CURRENT_DATE|CURDATE)(\(\))?\z/', $upper)) {
+            return ['CURRENT_DATE', true];
+        }
+        if (preg_match('/\A(CURRENT_TIME|CURTIME)(\(\d*\))?\z/', $upper)) {
+            return ['CURRENT_TIME', true];
         }
 
-        // MariaDB also reports `current_timestamp()` variants and
-        // arithmetic expressions unquoted. If it parses as numeric,
-        // it's a literal number; otherwise treat as expression so the
-        // emitter passes it through verbatim.
+        // MariaDB também traz `current_timestamp()` e aritmética sem aspas.
+        // Número é literal; o resto passa adiante como expressão.
         if ($this->isMariaDb && ! is_numeric($s)) {
             return [$s, true];
         }
@@ -204,12 +192,9 @@ class MysqlIntrospector implements SchemaIntrospector
     }
 
     /**
-     * Map a MySQL DATA_TYPE / COLUMN_TYPE pair to the neutral
-     * ColumnType enum, plus any extracted ENUM values. Records a
-     * warning when the source uses a type we can't fully model
-     * (SET, spatial types, BIT(>1), and any unknown engine-specific
-     * type) — those values still travel as TEXT/string but the
-     * destination column will not enforce the same semantics.
+     * DATA_TYPE / COLUMN_TYPE para o tipo neutro, mais os valores de ENUM.
+     * Tipos que não dá para modelar por inteiro (SET, espaciais, BIT(>1),
+     * desconhecidos) geram aviso: os dados viajam, a semântica não.
      *
      * @return array{0: ColumnType, 1: list<string>|null}
      */
@@ -246,21 +231,18 @@ class MysqlIntrospector implements SchemaIntrospector
             'year'       => ColumnType::SMALLINT,
             'json'       => ColumnType::JSON,
             'enum'       => ColumnType::ENUM,
-            // SET values are comma-separated strings on the wire — TEXT
-            // is correct, only the SET-specific semantics are lost.
+            // SET chega como string separada por vírgula; perde só a semântica.
             'set'        => $this->warnLossyType($table, $column, $dataType,
                             'multi-value SET semantics are dropped; values travel as a comma-joined string',
                             ColumnType::TEXT),
-            // BIT(1) is the canonical "boolean in MySQL"; BIT(>1) is
-            // binary and only survives intact in a binary column.
+            // BIT(1) é o booleano do MySQL; BIT(>1) é binário e só sobrevive em BLOB.
             'bit'        => str_contains($columnType, '(1)')
                               ? ColumnType::BOOL
                               : $this->warnLossyType($table, $column, $columnType,
                                   'multi-bit BIT() has no native equivalent — values travel as raw bytes',
                                   ColumnType::BLOB),
-            // Spatial types carry WKB binary bytes; they can't round-
-            // trip through TEXT on PG/SQLite (UTF-8 validation will
-            // reject them) so we route them through BLOB instead.
+            // Espaciais são WKB binário; como TEXT a validação UTF-8 do PG/SQLite
+            // recusaria, então vão como BLOB.
             'point', 'linestring', 'polygon', 'geometry',
             'multipoint', 'multilinestring', 'multipolygon',
             'geometrycollection'
@@ -274,7 +256,6 @@ class MysqlIntrospector implements SchemaIntrospector
 
         $enumValues = null;
         if ($type === ColumnType::ENUM && preg_match("/enum\((.+)\)/i", $columnType, $m)) {
-            // Members come quoted with single quotes and comma-separated.
             $enumValues = [];
             foreach (str_getcsv($m[1], ',', "'", '\\') as $v) {
                 $enumValues[] = (string) $v;
@@ -285,11 +266,9 @@ class MysqlIntrospector implements SchemaIntrospector
     }
 
     /**
-     * Record a warning and return the caller-chosen fallback type.
-     * Splitting this out keeps the mapType match arms one line each
-     * and the warning copy in one place. The fallback type is a
-     * parameter rather than a constant because spatial / BIT(>1) data
-     * needs BLOB to survive (TEXT would fail UTF-8 validation in PG).
+     * Registra o aviso e devolve o tipo de fallback. O fallback é parâmetro
+     * porque espaciais e BIT(>1) precisam de BLOB (TEXT falharia na
+     * validação UTF-8 do PG).
      */
     private function warnLossyType(string $table, string $column, string $sourceType, string $detail, ColumnType $fallback): ColumnType
     {

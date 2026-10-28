@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup;
 
 use Flarum\Extend;
@@ -21,6 +30,7 @@ use Ramon\Backup\Api\Controller\UploadImportController;
 use Ramon\Backup\Console\ExportCommand;
 use Ramon\Backup\Console\ImportCommand;
 use Ramon\Backup\Console\PruneStaleJobsCommand;
+use Ramon\Backup\Console\PruneStaleJobsSchedule;
 use Ramon\Backup\Settings\SettingsPreserver;
 
 return [
@@ -34,26 +44,19 @@ return [
         ->command(ExportCommand::class)
         ->command(ImportCommand::class)
         ->command(PruneStaleJobsCommand::class)
-        // Sweep abandoned/errored staging dirs daily so a closed tab or
-        // a failed job doesn't leave a plaintext dump.sql sitting under
-        // storage/backup-tmp forever. Requires the operator's cron to run
-        // `php flarum schedule:run`; the command is also runnable by hand.
-        ->schedule(PruneStaleJobsCommand::class, function (\Illuminate\Console\Scheduling\Event $event) {
-            $event->daily();
-        }),
+        // Limpa diariamente staging abandonado ou com erro, para não sobrar
+        // dump.sql em texto puro em storage/backup-tmp. Depende do cron rodar
+        // `php flarum schedule:run`; o comando também roda à mão.
+        ->schedule(PruneStaleJobsCommand::class, PruneStaleJobsSchedule::class),
 
     (new Extend\Settings())
-        // Public encryption key (base64). Empty string means encryption is off.
-        // Same trust model as ramon/verified — the matching PRIVATE key is
-        // pasted into config.php under `backup-private-key`, never stored
-        // in the database.
+        // Chave pública (base64); vazia desliga a criptografia. A chave
+        // privada fica só no config.php (`backup-private-key`), nunca no banco.
         ->default('ramon-backup.encryption_public_key', '')
         /*
-         * Padrões extra de chaves de `settings` que um restore não pode
-         * sobrescrever, um por linha (sufixo `*` casa por prefixo). O
-         * baseline — SMTP, fila, tokens desta instalação — está em
-         * SettingsPreserver::BASELINE; esta chave existe para o operador
-         * acrescentar o que for específico do ambiente dele.
+         * Chaves extras de `settings` que o restore não sobrescreve, uma por
+         * linha (`*` no fim casa por prefixo). Somam-se a
+         * SettingsPreserver::BASELINE.
          */
         ->default(SettingsPreserver::EXTRA_KEY, ''),
 
@@ -66,8 +69,7 @@ return [
         ->post('/backup/exports/{id:[a-f0-9]+}/tick', 'backup.export.tick', TickExportController::class)
         ->delete('/backup/exports/{id:[a-f0-9]+}',    'backup.export.cancel', CancelExportController::class)
 
-        // Chunked upload protocol — see UploadImportController docblock
-        // for why this replaced the old single multipart POST.
+        // Upload em partes; o protocolo está no docblock de UploadImportController.
         ->post('/backup/imports',                          'backup.import.upload',  UploadImportController::class)
         ->post('/backup/imports/{id:[a-f0-9]+}/chunk',     'backup.import.chunk',   ChunkImportController::class)
         ->post('/backup/imports/{id:[a-f0-9]+}/inspect',   'backup.import.inspect', InspectImportController::class)

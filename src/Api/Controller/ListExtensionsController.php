@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Laminas\Diactoros\Response\JsonResponse;
@@ -11,9 +20,8 @@ use Ramon\Backup\Extensions\Inventory;
 /**
  * GET /api/backup/extensions
  *
- * Lists every extension installed on this Flarum, with the location
- * tag the export modal renders ("workbench" / "vendor"). The admin
- * picks which extensions to bundle on the export side.
+ * Extensões instaladas, com a origem ("workbench" / "vendor") que o modal
+ * de exportação mostra para o admin escolher o que empacotar.
  */
 class ListExtensionsController implements RequestHandlerInterface
 {

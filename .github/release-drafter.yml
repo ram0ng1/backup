@@ -49,15 +49,11 @@ version-resolver:
       - 'traducao'
       - 'manutencao'
   default: patch
-change-template: '- $TITLE (PR #$NUMBER) por @$AUTHOR'
+# Links absolutos: o texto do release também é colado fora do GitHub.
+change-template: '- $TITLE ([#$NUMBER]($URL)) por [@$AUTHOR](https://github.com/$AUTHOR)'
+# "Como atualizar" não fica aqui: o release-management.yml monta esse bloco e o
+# passa como `footer`, incluindo `php flarum migrate` só quando a versão traz
+# migração nova.
 template: |
   ## O que mudou na extensão Backup & Migration 🌟
   $CHANGES
-
-  ## 📦 Como atualizar
-
-  ```bash
-  composer require ramon/backup:$RESOLVED_VERSION
-  php flarum cache:clear
-  php flarum assets:publish
-  ```

@@ -1,25 +1,33 @@
 <?php
 
-namespace Ramon\Backup\Tests\Unit;
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Ramon\Backup\Tests\unit;
 
 use Flarum\Foundation\Paths;
 use PHPUnit\Framework\TestCase;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 
 /**
- * Regressão do incidente de produção que motivou esta camada.
+ * Regressão de um incidente de produção.
  *
- * Um restore sobrescreveu o composer.json vivo com o do backup, que era
- * anterior à instalação do fof/redis. O `composer install` seguinte podou
- * fof/redis, predis e illuminate/redis do vendor/ e reverteu um pin de
- * segurança do guzzle. O extend.php da raiz continuou referenciando
- * `FoF\Redis\Extend\Redis`; como o core dá `require` nesse arquivo dentro
- * de `Site::fromPaths()`, antes de existir handler de erro, o fórum caiu
- * com exit 255, saída vazia e log vazio.
+ * Um restore sobrescreveu o composer.json vivo com o do backup, anterior ao
+ * fof/redis. O `composer install` seguinte podou fof/redis, predis e
+ * illuminate/redis e reverteu um pin de segurança do guzzle. O extend.php
+ * da raiz continuou citando `FoF\Redis\Extend\Redis`, e como o core dá
+ * `require` nele em `Site::fromPaths()`, antes de existir handler de erro,
+ * o fórum caiu com exit 255 sem saída nem log.
  *
- * Os testes abaixo travam as três propriedades que impedem a repetição:
- * o merge nunca remove require, o lock de outro servidor nunca é gravado,
- * e a classe pendurada é detectada e nomeada.
+ * Os testes travam três propriedades: o merge nunca remove require, o lock
+ * de outro servidor nunca é gravado e a classe pendurada é detectada.
  */
 final class ProjectReconcilerTest extends TestCase
 {
@@ -37,7 +45,7 @@ final class ProjectReconcilerTest extends TestCase
             'base'    => $this->base,
             'public'  => $this->base,
             'storage' => $this->base,
-        ]));
+        ]), new Messages());
     }
 
     protected function tearDown(): void
@@ -192,9 +200,9 @@ final class ProjectReconcilerTest extends TestCase
     }
 
     /**
-     * Lê uma fixture criada pelo próprio teste. O caminho sai de
-     * `$this->base` / `$this->staging`, nunca de input — o alerta de SSRF
-     * do semgrep é falso positivo e fica suprimido num ponto só.
+     * Lê uma fixture criada pelo próprio teste. O caminho vem de `$this->base`
+     * ou `$this->staging`, nunca de input; o alerta de SSRF do semgrep é falso
+     * positivo e fica suprimido só aqui.
      */
     private function read(string $path): string
     {

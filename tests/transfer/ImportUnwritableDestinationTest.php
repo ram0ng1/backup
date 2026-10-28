@@ -1,6 +1,15 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Ramon\Backup\Tests\transfer;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
@@ -10,15 +19,14 @@ use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 use ReflectionMethod;
 
 /**
- * Guarda de regressão para o destino que o disco recusa. Um `vendor/`
- * pertencente a root com o PHP rodando como www-data fazia o extract
- * lançar no primeiro arquivo de extensão — e a restauração inteira
- * morria sem gravar banco, assets nem storage. O destino recusado agora
- * é contado, amostrado com o motivo do SO, e a restauração segue.
+ * Destino que o disco recusa (ex.: `vendor/` de root com o PHP como
+ * www-data). Ele é contado e amostrado com o motivo do SO, e a
+ * restauração segue em vez de morrer sem gravar banco, assets e storage.
  */
 final class ImportUnwritableDestinationTest extends TestCase
 {
@@ -51,8 +59,9 @@ final class ImportUnwritableDestinationTest extends TestCase
             Mockery::mock(Connection::class),
             new BackupCipher($settings, $config),
             $config,
-            new \Ramon\Backup\Project\ProjectReconciler($paths),
-            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+            new \Ramon\Backup\Project\ProjectReconciler($paths, new Messages()),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings),
+            new Messages()
         );
 
         $this->openDestination = new ReflectionMethod($this->job, 'openDestination');
@@ -75,10 +84,9 @@ final class ImportUnwritableDestinationTest extends TestCase
     }
 
     /**
-     * O caso que motivou a mudança: destino impossível devolve null com o
-     * motivo, em vez de lançar. Um componente de caminho que é ARQUIVO
-     * derruba mkdir e fopen em qualquer plataforma, sem depender de chmod
-     * (que é no-op no Windows).
+     * Destino impossível devolve null com o motivo, em vez de lançar. Um
+     * componente do caminho que é ARQUIVO derruba mkdir e fopen em qualquer
+     * plataforma, sem depender de chmod (no-op no Windows).
      */
     public function test_openDestination_returns_null_with_reason_when_write_is_impossible(): void
     {
@@ -159,7 +167,7 @@ final class ImportUnwritableDestinationTest extends TestCase
         $warnings = (array) $state->get('warnings');
         $this->assertCount(1, $warnings);
         $this->assertStringContainsString($vendor, (string) $warnings[0]);
-        $this->assertStringContainsString('permissão de escrita', (string) $warnings[0]);
+        $this->assertStringContainsString('No write permission', (string) $warnings[0]);
     }
 
     private function rrmdir(string $dir): void

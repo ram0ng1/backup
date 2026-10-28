@@ -1,24 +1,27 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Settings;
 
 use Flarum\Settings\SettingsRepositoryInterface;
 use Throwable;
 
 /**
- * Guarda, antes do restore do banco, as chaves da tabela `settings` que
- * descrevem ESTE servidor — e as regrava depois.
+ * Guarda antes do restore as chaves de `settings` que descrevem ESTE
+ * servidor e as regrava depois.
  *
- * O dump inclui todas as tabelas, e o restore faz DROP/CREATE: sem esta
- * camada, um restore troca a configuração de infraestrutura do destino
- * pela da origem. Foi assim que uma fila Redis configurada pelo painel
- * (`fof-redis.*`) sumiu num restore — o pacote continuava instalado, mas
- * a configuração que o ligava tinha virado a do fórum de origem.
- *
- * O critério de "descreve o servidor, não o fórum" é o que separa o que
- * entra da lista: credenciais de SMTP, endpoint de fila, tokens OAuth do
- * destino. Conteúdo do fórum (título, cores, permissões) tem que vir do
- * backup — é justamente o que se está restaurando.
+ * O restore faz DROP/CREATE de todas as tabelas; sem isto, a configuração
+ * de infraestrutura do destino (SMTP, fila `fof-redis.*`, tokens OAuth)
+ * vira a da origem. Conteúdo do fórum (título, cores, permissões) continua
+ * vindo do backup.
  */
 class SettingsPreserver
 {

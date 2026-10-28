@@ -1,7 +1,7 @@
-import app from "flarum/admin/app";
-import Modal, { IInternalModalAttrs } from "flarum/common/components/Modal";
-import Button from "flarum/common/components/Button";
-import type Mithril from "mithril";
+import app from 'flarum/admin/app';
+import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
+import Button from 'flarum/common/components/Button';
+import type Mithril from 'mithril';
 
 export interface ConfirmModalAttrs extends IInternalModalAttrs {
   title: Mithril.Children;
@@ -14,11 +14,10 @@ export interface ConfirmModalAttrs extends IInternalModalAttrs {
 }
 
 /**
- * Dropin replacement for `window.confirm()`. Native confirm breaks the
- * Flarum dark-mode chrome and is silently auto-rejected by some
- * locked-down corporate browsers — this modal stays inside the SPA.
+ * Substituto do `window.confirm()`, que quebra o modo escuro do Flarum e é
+ * rejeitado em silêncio por alguns navegadores corporativos travados.
  *
- * Usage:
+ * Uso:
  *   const ok = await confirmAsync({ title, body, danger: true });
  *   if (!ok) return;
  */
@@ -26,7 +25,7 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   protected resolved = false;
 
   className() {
-    return "BackupConfirmModal Modal--small";
+    return 'BackupConfirmModal Modal--small';
   }
 
   title() {
@@ -34,24 +33,14 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   }
 
   content() {
-    const confirmLabel =
-      this.attrs.confirmLabel ??
-      app.translator.trans("ramon-backup.admin.errors.confirm_default");
-    const cancelLabel =
-      this.attrs.cancelLabel ??
-      app.translator.trans("ramon-backup.admin.errors.cancel_default");
+    const confirmLabel = this.attrs.confirmLabel ?? app.translator.trans('ramon-backup.admin.errors.confirm_default');
+    const cancelLabel = this.attrs.cancelLabel ?? app.translator.trans('ramon-backup.admin.errors.cancel_default');
 
     return (
       <div className="Modal-body">
         <div className="BackupConfirmModal-body">{this.attrs.body}</div>
         <div className="Form-group BackupConfirmModal-actions">
-          <Button
-            className={
-              "Button " +
-              (this.attrs.danger ? "Button--danger" : "Button--primary")
-            }
-            onclick={() => this.decide(true)}
-          >
+          <Button className={'Button ' + (this.attrs.danger ? 'Button--danger' : 'Button--primary')} onclick={() => this.decide(true)}>
             {confirmLabel}
           </Button>
           <Button className="Button" onclick={() => this.decide(false)}>
@@ -69,9 +58,8 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
     this.hide();
   }
 
-  // Esc key / backdrop click / X button all funnel through Mithril's
-  // remove lifecycle. If the user dismissed without picking a button,
-  // treat that as a cancel so the awaiting Promise actually resolves.
+  // Esc, clique fora e o X passam pelo onremove do Mithril. Fechar sem
+  // escolher um botão conta como cancelar, para a Promise resolver.
   onbeforeremove(vnode: Mithril.VnodeDOM<ConfirmModalAttrs, this>) {
     if (!this.resolved) {
       this.resolved = true;
@@ -81,13 +69,8 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   }
 }
 
-/** Promise wrapper so callers can `await confirmAsync(...)`. */
-export function confirmAsync(
-  attrs: Omit<
-    ConfirmModalAttrs,
-    "onConfirm" | "onCancel" | keyof IInternalModalAttrs
-  >,
-): Promise<boolean> {
+/** Versão em Promise, para usar `await confirmAsync(...)`. */
+export function confirmAsync(attrs: Omit<ConfirmModalAttrs, 'onConfirm' | 'onCancel' | keyof IInternalModalAttrs>): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const settle = (v: boolean) => {

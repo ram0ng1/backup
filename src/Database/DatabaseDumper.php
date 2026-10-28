@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Database;
 
 use Illuminate\Database\Connection;
@@ -12,29 +21,14 @@ use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
 /**
- * Cross-engine, resumable database dumper.
+ * Dump de banco entre engines, retomável por tick.
  *
- * Architecture:
- *   - The SOURCE connection is read by a dialect-specific
- *     `SchemaIntrospector`, which produces an engine-neutral
- *     `Schema\Table` model.
- *   - The TARGET dialect (chosen at backup time by the admin) selects
- *     a `SqlEmitter`, which renders that neutral model + raw row data
- *     into the SQL the target engine expects.
- *
- * Output is plain SQL with one statement per logical block, separated
- * by `\n-- @@END@@\n`. The sentinel comment is what `DatabaseRestorer`
- * splits on — we don't try to parse semicolons because string literals
- * (and PG `$$` blocks) can contain them. The delimiter is a comment in
- * every supported engine, so the dump remains usable as a regular .sql
- * with any of the engines' command-line clients.
- *
- * Resumable shape:
- *   - The dumper is consumed via `dumpChunk()` style calls from
- *     `ExportJob`, which writes the SQL to a temp file and persists
- *     a small cursor between ticks.
- *   - State persisted between ticks: `phase` (schema|data|done),
- *     remaining tables, and the offset into the current table.
+ * Um `SchemaIntrospector` do banco de origem gera o modelo neutro
+ * (`Schema\Table`) e o `SqlEmitter` do dialeto escolhido pelo admin o
+ * transforma em SQL. Os statements são separados por `\n-- @@END@@\n`,
+ * que o `DatabaseRestorer` usa no lugar de `;` (literais e blocos `$$` do
+ * PostgreSQL podem conter ponto e vírgula). Como o separador é comentário
+ * em todos os engines, o dump também roda nos clientes de linha de comando.
  */
 class DatabaseDumper
 {
@@ -45,19 +39,16 @@ class DatabaseDumper
     public const PHASE_DONE   = 'done';
 
     /**
-     * Linhas por SELECT para tabelas que podem guardar valores grandes
-     * (famílias TEXT/BLOB/JSON ou VARCHAR/BINARY largos) — pequeno para
-     * um lote nunca bufferizar dezenas de MB em PHP.
+     * Linhas por SELECT em tabelas que podem ter valores grandes (TEXT/BLOB/
+     * JSON ou VARCHAR/BINARY largos): pequeno para um lote não segurar
+     * dezenas de MB no PHP.
      */
     private const ROWS_PER_QUERY = 200;
 
     /**
-     * Linhas por SELECT para tabelas só com escalares limitados (ints,
-     * datas, strings curtas) — caso das grandes pivôs como `post_likes`.
-     * O lote grande derruba o número de idas ao banco ~25×, o que faz uma
-     * tabela de milhões de linhas ser dumpada em segundos. Seguro em
-     * memória porque cada linha é minúscula; o keyset (ver dumpDataBatch)
-     * é o que mantém um lote tão profundo ainda barato de buscar.
+     * Linhas por SELECT em tabelas só com escalares curtos, como pivôs do tipo
+     * `post_likes`. Corta as idas ao banco em ~25×; seguro em memória porque
+     * cada linha é mínima, e o keyset mantém barato buscar lotes profundos.
      */
     private const ROWS_PER_QUERY_BULK = 5000;
 
@@ -67,7 +58,7 @@ class DatabaseDumper
     private SchemaIntrospector $introspector;
     private SqlEmitter $emitter;
 
-    /** Cache: table name → described neutral table (so we don't re-query). */
+    /** Cache: tabela → modelo neutro, para não consultar o catálogo de novo. */
     private array $describedCache = [];
 
     public function __construct(
@@ -79,19 +70,15 @@ class DatabaseDumper
         $this->emitter      = EmitterFactory::for($target ?? $source);
     }
 
-    /** The dialect tag the produced SQL targets — recorded in archive meta. */
+    /** Dialeto alvo do SQL gerado, gravado no meta do arquivo. */
     public function targetTag(): string
     {
         return $this->emitter->targetTag();
     }
 
     /**
-     * Lossy-translation notes accumulated during THIS instance's
-     * lifetime — both from the introspector (unsupported source types,
-     * generated columns, etc.) and from the emitter (e.g. PG skipping
-     * a FULLTEXT or oversize-btree index). The caller (ExportJob)
-     * merges them into the persistent job state so the UI can show
-     * the union across all ticks at the end.
+     * Avisos de tradução com perda (do introspector e do emitter) desta
+     * instância. O ExportJob junta os de todos os ticks no estado do job.
      *
      * @return list<string>
      */
@@ -104,8 +91,7 @@ class DatabaseDumper
     }
 
     /**
-     * Enumerate user tables. Returned in a stable order so the dump is
-     * reproducible and resumable across ticks.
+     * Em ordem estável, para o dump ser reproduzível e retomável.
      *
      * @return list<string>
      */
@@ -120,15 +106,10 @@ class DatabaseDumper
     }
 
     /**
-     * `DROP TABLE IF EXISTS` for every user table, emitted in one block
-     * right after the preamble and BEFORE any CREATE. Doing all drops up
-     * front (rather than a DROP immediately before each table's CREATE)
-     * makes a restore robust against any prior state on the destination:
-     * a leftover child table from an earlier, differently-typed dump
-     * can't make the parent's CREATE fail MySQL's FK column-type check,
-     * and PostgreSQL parents drop cleanly via CASCADE without a manual
-     * child-first ordering. FK enforcement is already suspended for the
-     * load (preamble + the restorer), so drop order here is irrelevant.
+     * Todos os `DROP TABLE IF EXISTS` num bloco só, antes de qualquer CREATE.
+     * Assim uma tabela filha que sobrou de outro dump não derruba o CREATE do
+     * pai na checagem de tipo de FK do MySQL, e no PostgreSQL o CASCADE
+     * dispensa ordenar filhos antes de pais.
      */
     public function dropAllTables(): string
     {
@@ -142,18 +123,10 @@ class DatabaseDumper
 
     public function epilogue(): string
     {
-        // Per-table fixups (PG sequence setval AND FK creation) are
-        // rendered just before the session-level epilogue so the
-        // emitter can rely on every row being in place — FKs added
-        // here validate in one pass and pass cleanly on consistent
-        // source data. The dumper instance is recreated per tick, so
-        // we re-describe every table at end-of-stream rather than
-        // trusting the in-memory cache.
-        //
-        // Always call the emitter regardless of "looks like there's
-        // nothing to do" heuristics: only the emitter itself knows
-        // whether it has FKs to add, sequences to bump, both, or
-        // neither (returning '' when neither applies).
+        // Fixups por tabela (setval de sequência e FKs no PostgreSQL) vão logo
+        // antes do epílogo, com todas as linhas já carregadas. O dumper é recriado
+        // a cada tick, então as tabelas são descritas de novo em vez de confiar no
+        // cache. Só o emitter sabe se há algo a fazer; ele devolve '' se não houver.
         $tail = '';
         foreach ($this->introspector->listTables() as $name) {
             $tail .= $this->emitter->emitPostDataFixups($this->describe($name));
@@ -161,10 +134,6 @@ class DatabaseDumper
         return $tail . $this->emitter->epilogue();
     }
 
-    /**
-     * Drop + recreate DDL for one table. Keeping the public name
-     * `dumpSchema` so the existing `ExportJob` driver loop is undisturbed.
-     */
     public function dumpSchema(string $table): string
     {
         $this->assertSafeIdent($table);
@@ -173,25 +142,16 @@ class DatabaseDumper
     }
 
     /**
-     * Devolve o próximo lote de linhas de `$table`, retornando o SQL, a
-     * quantidade de linhas consumidas e a chave da última linha emitida
-     * para o próximo tick continuar de onde parou.
+     * Próximo lote de linhas de `$table`: SQL, linhas consumidas e a chave da
+     * última linha, para o próximo tick continuar dali.
      *
-     * Tabelas com primary key usam paginação por keyset, com o predicado
-     * na forma EXPANDIDA `a > ? OR (a = ? AND b > ?)` (ver keysetPredicate)
-     * em vez da tupla `(a, b) > (?, ?)`. A tupla é mais limpa, mas o
-     * otimizador do MySQL 8 NÃO a converte em range scan — ela vira
-     * `type=index` (varredura cheia do índice) e degrada para O(n²) em
-     * chaves profundas, reproduzindo o "travado em 1,4M". A forma
-     * expandida faz `type=range` (seek no índice), O(n) no total, e é
-     * portável entre MySQL, MariaDB, PostgreSQL e SQLite.
+     * Com primary key, pagina por keyset na forma EXPANDIDA
+     * `a > ? OR (a = ? AND b > ?)` (ver keysetPredicate). A tupla
+     * `(a, b) > (?, ?)` vira varredura cheia do índice no MySQL 8 e fica O(n²)
+     * em chaves profundas; a forma expandida faz range scan e funciona em
+     * MySQL, MariaDB, PostgreSQL e SQLite. Sem primary key, cai no `$offset`.
      *
-     * Tabelas sem primary key caem no fallback por `$offset` — correção
-     * acima de velocidade; são raras e geralmente pequenas.
-     *
-     * `$afterKey` é o mapa coluna→valor da PK da última linha do tick
-     * anterior (null no primeiro toque). SQL vazio com `consumed == 0`
-     * sinaliza "tabela esgotada".
+     * SQL vazio com `consumed == 0` indica tabela esgotada.
      *
      * @param array<string, mixed>|null $afterKey
      * @return array{sql: string, consumed: int, after_key: array<string, mixed>|null}
@@ -247,11 +207,7 @@ class DatabaseDumper
         ];
     }
 
-    /**
-     * One-line legacy quoter used only by the SELECT-path in
-     * `dumpDataBatch` — it must match the SOURCE engine, not the
-     * target. Engine-specific.
-     */
+    /** Quoting do SELECT: segue o engine de ORIGEM, não o alvo. */
     private function quoteIdentForRead(string $ident): string
     {
         $this->assertSafeIdent($ident);
@@ -263,11 +219,9 @@ class DatabaseDumper
     }
 
     /**
-     * Reject identifiers that don't match a strict ASCII allowlist.
-     * Tables and primary-key columns reaching this point originate from
-     * schema introspection (`information_schema` / `sqlite_master`), so
-     * normal data never trips this — it's a hard stop for a corrupted
-     * catalog or a future code path that forwards request input.
+     * Identificadores vêm do catálogo, então dado normal nunca cai aqui. É
+     * barreira contra catálogo corrompido ou um caminho futuro que repasse
+     * input da requisição.
      */
     private function assertSafeIdent(string $ident): void
     {
@@ -277,11 +231,8 @@ class DatabaseDumper
     }
 
     /**
-     * Conta as linhas de `$table` na fonte. Usado pelo driver de export
-     * para mostrar progresso por tabela ("linha X de Y") no CLI e no
-     * admin. Chamado uma vez por tabela (no primeiro toque), então o
-     * custo do `COUNT(*)` — uma varredura de índice em InnoDB — é pago
-     * uma única vez por tabela, não por lote.
+     * Para o progresso "linha X de Y". Chamado uma vez por tabela, no primeiro
+     * tick, então o `COUNT(*)` não é pago a cada lote.
      */
     public function countRows(string $table): int
     {
@@ -295,17 +246,15 @@ class DatabaseDumper
     }
 
     /**
-     * Monta o predicado de keyset na forma lexicográfica expandida para
-     * uma PK de N colunas:
+     * Predicado de keyset na forma lexicográfica expandida:
      *
      *   (a > ?)
      *   OR (a = ? AND b > ?)
      *   OR (a = ? AND b = ? AND c > ?)
      *
-     * Cada cláusula usa apenas igualdades nas colunas anteriores e um `>`
-     * na coluna corrente, o que o otimizador resolve como range scan no
-     * índice da PK — ao contrário da tupla `(a,b,…) > (?,?,…)`. Os
-     * bindings são anexados em `$bindings` na MESMA ordem dos `?`.
+     * Cada cláusula só usa igualdades nas colunas anteriores e `>` na atual,
+     * o que o otimizador resolve como range scan. Os bindings entram em
+     * `$bindings` na MESMA ordem dos `?`.
      *
      * @param list<string>             $pk         nomes crus das colunas da PK
      * @param list<string>             $orderCols  os mesmos nomes, já quotados
@@ -330,10 +279,8 @@ class DatabaseDumper
     }
 
     /**
-     * Escolhe o tamanho do lote de leitura. Qualquer coluna potencialmente
-     * grande (TEXT/BLOB/JSON, ou VARCHAR/BINARY acima de
-     * WIDE_STRING_THRESHOLD) força o lote pequeno para limitar a memória
-     * por batch; tabelas só com escalares limitados usam o lote grande.
+     * Qualquer coluna que possa ser grande (TEXT/BLOB/JSON, ou VARCHAR/BINARY
+     * acima de WIDE_STRING_THRESHOLD) força o lote pequeno.
      */
     private function batchSizeFor(Table $table): int
     {

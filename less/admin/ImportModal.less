@@ -1,0 +1,216 @@
+.BackupImport-uploadProgress {
+  margin: 12px 0;
+}
+.BackupImport-bar-fill--indeterminate {
+  width: 40%;
+  animation: BackupImport-indeterminate 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .BackupImport-bar-fill--indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+@keyframes BackupImport-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.BackupImport-uploadStatus {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.BackupImport-reloadNote {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+
+  .icon { margin-top: 2px; }
+}
+
+.BackupImport-completed {
+  text-align: center;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.BackupImport-completedIcon {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(231, 159, 23, 0.12);
+  color: #e79f17;
+
+  i { font-size: 32px; }
+}
+.BackupImport-completedIcon--success {
+  background: rgba(46, 204, 113, 0.14);
+  color: #2ecc71;
+}
+// Restauração que terminou sem gravar tudo. Repete o âmbar do estado
+// base de propósito: um restore incompleto NUNCA pode herdar o verde.
+.BackupImport-completedIcon--warning {
+  background: rgba(231, 159, 23, 0.12);
+  color: #e79f17;
+}
+.BackupImport-completedWarnings {
+  text-align: left;
+  width: 100%;
+
+  ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+}
+.BackupImport-completedTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.BackupImport-completedBody {
+  margin: 0;
+  max-width: 420px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted-color);
+
+  code {
+    font-family: monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--control-bg, rgba(0, 0, 0, 0.06));
+  }
+}
+.BackupImport-completedSteps {
+  text-align: left;
+  margin: 4px 0 8px;
+  padding-left: 22px;
+  font-size: 13px;
+  color: var(--muted-color);
+
+  li { margin-bottom: 4px; }
+}
+.BackupImport-completedAction {
+  min-width: 220px;
+  margin-top: 8px;
+}
+
+.BackupImport-fileLabel {
+  display: block;
+  border: 2px dashed var(--control-bg, rgba(0, 0, 0, 0.20));
+  border-radius: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  margin: 20px 0;
+  word-break: break-word;
+
+  input[type='file'] {
+    display: block;
+    margin: 0 auto 8px;
+  }
+}
+
+.BackupImport-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  font-size: 13px;
+  margin: 12px 0 20px;
+
+  dt {
+    font-weight: 600;
+    color: var(--muted-color);
+  }
+  // URL e lista de conteúdo quebram dentro da coluna em vez de vazar do modal.
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.BackupImport-confirmAlert {
+  margin: 20px 0;
+}
+.BackupImport-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-weight: 600;
+
+  input { flex-shrink: 0; margin: 3px 0 0; }
+}
+.BackupImport-keyHint {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+.BackupImport-advisories {
+  margin: 0 0 16px;
+
+  ul { margin: 0; padding-left: 18px; }
+}
+
+.BackupImport-urlNote {
+  margin: 0 0 20px;
+  font-size: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(29, 155, 240, 0.10);
+  color: #1d9bf0;
+  padding: 8px 12px;
+  border-radius: 6px;
+
+  .icon { margin-top: 2px; }
+}
+
+.BackupImport-sectionRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+
+  input { flex-shrink: 0; margin: 3px 0 0; }
+}
+.BackupImport-sectionLabel {
+  min-width: 0;
+}
+.BackupImport-sectionCount {
+  white-space: nowrap;
+}
+.BackupImport-sectionLabel {
+  font-weight: 600;
+}
+.BackupImport-sectionCount {
+  font-size: 12px;
+}
+
+// Bloco das opções que decidem o que do SERVIDOR sobrevive ao restore.
+// Separado por uma régua de propósito: são escolhas de natureza
+// diferente das caixas "o que do backup aplicar" acima.
+.BackupImport-serverState {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+
+  h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  > .helpText {
+    margin-bottom: 8px;
+  }
+}

@@ -3,7 +3,7 @@ name: Security Scan
 # Duas camadas de SAST:
 #   1. Rulesets genéricos do Semgrep (PHP, OWASP, secrets, JS).
 #   2. Regras específicas de Flarum v2 (.github/semgrep/flarum-v2.yaml) —
-#      derivadas do playbook de segurança CLAUDE.md (§2–§37).
+#      derivadas do playbook de segurança da família de extensões.
 # CodeQL (JS/TS) fica no codeql.yml.
 on:
   push:
@@ -16,7 +16,7 @@ on:
     - cron: '0 7 * * 1'  # toda segunda, 07:00 UTC
   workflow_dispatch:
 
-# §35.13 C1 — default-deny.
+# Nega tudo ao GITHUB_TOKEN por padrão; o job declara o que precisa.
 permissions: {}
 
 concurrency:
@@ -32,10 +32,8 @@ jobs:
       security-events: write   # upload SARIF
       actions: read
     container:
-      # 1.96.0 saía com exit ≠ 0 na camada 2 (ruleset custom) sem escrever o
-      # SARIF — a etapa de upload então falhava com "Path does not exist".
-      # 1.163.0 roda as 22 regras e gera o arquivo (verificado localmente:
-      # `semgrep --validate` => 0 erros; `semgrep scan` => SARIF de 19 achados).
+      # Versões antigas (1.96) saíam com erro na camada 2 sem gravar o SARIF,
+      # e o upload falhava; a 1.163 roda as regras custom e gera o arquivo.
       image: semgrep/semgrep:1.163.0
     steps:
       - name: Checkout

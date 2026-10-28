@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Flarum\Foundation\ValidationException;
@@ -9,32 +18,32 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Job\ImportJob;
+use Ramon\Backup\Locale\Messages;
 
 /**
  * POST /api/backup/imports/{id}/start
  *
- * The user has reviewed the inspect result, optionally pasted a private
- * key (for encrypted archives whose key isn't in our config.php), and
- * checked the "I understand this will replace my data" box. We create
- * the persisted job state and let the tick endpoint take over.
+ * Cria o estado do job depois que o admin confirmou a substituição dos
+ * dados (e, se preciso, colou a chave privada); o tick assume dali.
  */
 class StartImportController implements RequestHandlerInterface
 {
     use AdminOnlyController;
 
     public function __construct(
-        protected ImportJob $job
+        protected ImportJob $job,
+        protected Messages $messages
     ) {
     }
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
         $actor = RequestUtil::getActor($request);
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $id)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $body = (array) $request->getParsedBody();
@@ -43,12 +52,11 @@ class StartImportController implements RequestHandlerInterface
 
         if (! $confirmReplace) {
             throw new ValidationException([
-                'confirm_replace' => 'You must confirm that this will replace existing data.',
+                'confirm_replace' => $this->messages->get('errors.confirm_replace'),
             ]);
         }
 
-        // Selection is optional. When absent we restore everything in
-        // the archive (backwards-compatible with older clients).
+        // Sem seleção, restaura tudo (clientes antigos não a enviam).
         $selection = is_array($body['selection'] ?? null) ? $body['selection'] : null;
 
         $state = $this->job->start(

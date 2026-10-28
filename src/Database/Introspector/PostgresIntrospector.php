@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Database\Introspector;
 
 use Illuminate\Database\Connection;
@@ -11,12 +20,9 @@ use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
 /**
- * Reads schema from a live PostgreSQL connection. Uses the standard
- * `information_schema.*` plus a small handful of `pg_catalog` queries
- * for things SQL-standard catalogs don't expose (sequence detection,
- * index column ordering).
- *
- * Schema scope: `current_schema()` (typically "public").
+ * Lê o schema de PostgreSQL por `information_schema`, com consultas ao
+ * `pg_catalog` para o que o padrão não expõe (sequências, ordem das
+ * colunas de índice). Escopo: `current_schema()`.
  */
 class PostgresIntrospector implements SchemaIntrospector
 {
@@ -95,8 +101,7 @@ class PostgresIntrospector implements SchemaIntrospector
             if ($rawDefault !== null && ! $autoIncrement) {
                 $s = (string) $rawDefault;
                 $upper = strtoupper($s);
-                // PG wraps literal defaults like 'foo'::text — peel
-                // both the quotes and the cast.
+                // Literal no formato 'foo'::text: tira as aspas e o cast.
                 if (preg_match("/^'((?:[^']|'')*)'::/i", $s, $m)) {
                     $default = str_replace("''", "'", $m[1]);
                 } elseif ($upper === 'NULL') {
@@ -105,18 +110,14 @@ class PostgresIntrospector implements SchemaIntrospector
                     $defaultIsExpr = true;
                     $default = 'CURRENT_TIMESTAMP';
                 } elseif ($upper === 'TRUE' || $upper === 'FALSE') {
-                    // PG boolean literal: stash as a plain string so
-                    // the BOOL-aware path in each emitter picks it up
-                    // and renders the right per-dialect form (1/0 for
-                    // MySQL, TRUE/FALSE for PG). Marking it as an
-                    // expression would emit the bareword `false`
-                    // verbatim, which is invalid in MySQL DDL.
+                    // Booleano fica como string comum para cada emitter renderizar no seu
+                    // dialeto (1/0 no MySQL); como expressão sairia `false` cru, inválido
+                    // em DDL do MySQL.
                     $default = $upper === 'TRUE' ? 'true' : 'false';
                 } elseif (is_numeric($s)) {
                     $default = $s;
                 } else {
-                    // Unknown expression — mark as expression so it's
-                    // emitted verbatim by emitters that understand it.
+                    // Expressão desconhecida: sai literal nos emitters que a entendem.
                     $defaultIsExpr = true;
                     $default = $s;
                 }
@@ -162,11 +163,9 @@ class PostgresIntrospector implements SchemaIntrospector
             str_starts_with($dataType, 'timestamp') => ColumnType::TIMESTAMP,
             $dataType === 'json' || $dataType === 'jsonb' => ColumnType::JSON,
             $dataType === 'uuid'                    => ColumnType::UUID,
-            // Arrays, ranges, geometric types, network types, money,
-            // tsvector, custom types, etc. — anything outside the SQL
-            // standard core. PG can serialise them as text via
-            // implicit cast on SELECT, but the destination engine
-            // won't reconstruct the type semantics.
+            // Arrays, ranges, tipos geométricos e de rede, money, tsvector, tipos
+            // próprios: o PG converte para texto no SELECT, mas o destino não recria
+            // a semântica.
             default                                 => null,
         };
 

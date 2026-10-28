@@ -1,0 +1,55 @@
+.BackupRevealModal,
+.BackupRegenerateModal {
+  .Modal-body > p:first-child {
+    margin: 0 0 16px;
+  }
+  .Alert {
+    margin-bottom: 16px;
+  }
+}
+.BackupReveal-label {
+  display: block;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.BackupReveal-snippet {
+  margin: 0 0 16px;
+  background: var(--body-bg);
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  padding: 12px;
+  word-break: break-all;
+  font-size: 12px;
+}
+.Modal-body .Form-group.BackupReveal-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.BackupRegenerate-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 20px;
+  user-select: none;
+
+  input { flex-shrink: 0; margin: 3px 0 0; }
+}
+
+// Confirmação genérica (excluir backup): texto, respiro, botões lado a lado.
+.BackupConfirmModal-body {
+  margin-bottom: 20px;
+}
+.Modal-body .Form-group.BackupConfirmModal-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 0;
+}

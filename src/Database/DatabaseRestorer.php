@@ -1,36 +1,32 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Database;
 
 use Illuminate\Database\Connection;
 use Throwable;
 
 /**
- * Plays SQL produced by `DatabaseDumper` back into a database.
+ * Executa o SQL do `DatabaseDumper`. O chamador alimenta bytes com
+ * `feed()` e `executeReady()` roda os statements completos; o que vem
+ * depois do último `STATEMENT_DELIMITER` fica no buffer.
  *
- * Resumable across ticks via a "buffer + cursor" model: the caller
- * pumps SQL bytes in via `feed()` and calls `executeReady()` to flush
- * whatever complete statements are already terminated. Anything past
- * the last `STATEMENT_DELIMITER` is held back in the buffer.
+ * A instância NÃO sobrevive ao tick: cada tick começa com buffer vazio.
+ * Logo, o cursor persistido pelo chamador nunca pode passar do último byte
+ * executado; ou o tick termina com {@see pendingBytes()} zerado, ou o
+ * cursor recua essa quantidade. Senão o tick seguinte reabre o dump no
+ * meio de um literal e o banco recebe o rabo de um INSERT.
  *
- * CONTRATO COM O CHAMADOR: a instância NÃO sobrevive ao tick — cada tick
- * constrói um restorer novo, de buffer vazio. Logo, o cursor que o
- * chamador persiste jamais pode passar do último byte executado. É para
- * isso que existe {@see pendingBytes()}: ou o tick só termina com ele
- * zerado (fronteira de statement), ou o cursor recua essa mesma
- * quantidade antes de ser salvo. Avançar o cursor por cima do buffer
- * descarta a cabeça de um statement e faz o tick seguinte reabrir o dump
- * no meio de um literal — o rabo do INSERT chega sozinho ao banco e volta
- * como erro de sintaxe.
- *
- * The restorer is engine-aware: it detects the destination's dialect
- * and uses the right "disable FK enforcement" toggle for the duration
- * of the load. Static helpers `disableForeignKeys()` /
- * `enableForeignKeys()` are exposed so the surrounding job code can
- * apply the toggle once per tick (each tick gets a fresh PDO session).
- *
- * Designed to be safe for repeated restores: every dumped table starts
- * with `DROP TABLE IF EXISTS`, so we never need to truncate up front.
+ * Como cada tick abre uma sessão PDO nova, `disableForeignKeys()` e
+ * `enableForeignKeys()` ficam expostos para o job aplicar a cada tick.
  */
 class DatabaseRestorer
 {
@@ -38,21 +34,44 @@ class DatabaseRestorer
 
     private int $statementsRun = 0;
 
+    /**
+     * Tabelas de que o Flarum precisa para iniciar e autenticar uma
+     * requisição. Pela web cada tick é uma requisição nova: se elas fossem
+     * derrubadas no primeiro tick, o seguinte nem iniciava (sem `settings`)
+     * ou perdia o admin (sem o token dele em `access_tokens`). Por isso os
+     * comandos delas ficam guardados e rodam juntos no fim.
+     */
+    public const BOOT_TABLES = ['settings', 'users', 'access_tokens', 'api_keys', 'groups', 'group_user', 'group_permission'];
+
+    /** @var resource|null */
+    private $deferredFh = null;
+
+    /** @var list<string> */
+    private array $deferredTables = [];
+
     public function __construct(
         protected Connection $db
     ) {
     }
 
-    /** Append more SQL bytes to the internal buffer. */
+    /**
+     * Guarda em `$fh` os comandos das tabelas de boot em vez de executá-los.
+     *
+     * @param resource $fh
+     */
+    public function deferBootTables($fh, string $prefix = ''): void
+    {
+        $this->deferredFh = $fh;
+        $this->deferredTables = array_map(fn (string $t) => $prefix.$t, self::BOOT_TABLES);
+    }
+
     public function feed(string $sqlChunk): void
     {
         $this->buffer .= $sqlChunk;
     }
 
     /**
-     * Execute every complete statement currently in the buffer. Returns
-     * how many were run. The remainder (everything past the last
-     * delimiter) stays in the buffer.
+     * Devolve quantos statements rodaram; o resto fica no buffer.
      */
     public function executeReady(): int
     {
@@ -72,7 +91,7 @@ class DatabaseRestorer
             if ($stmt === '' || str_starts_with($stmt, '--')) {
                 continue;
             }
-            $this->db->unprepared($stmt);
+            $this->run($stmt);
             $count++;
         }
 
@@ -81,9 +100,8 @@ class DatabaseRestorer
     }
 
     /**
-     * Drain whatever is left in the buffer (only meaningful at the end
-     * of the stream — the dumper always finishes with a delimiter, but
-     * dumps from older versions / external tools might not).
+     * Só no fim do stream. O dumper sempre termina com delimitador, mas dumps
+     * antigos ou de outras ferramentas podem não terminar.
      */
     public function finish(): int
     {
@@ -94,11 +112,86 @@ class DatabaseRestorer
         $stmt = trim($this->buffer);
         $this->buffer = '';
         if ($stmt !== '' && ! str_starts_with($stmt, '--')) {
-            $this->db->unprepared($stmt);
+            $this->run($stmt);
             $this->statementsRun++;
             return 1;
         }
         return 0;
+    }
+
+    private function run(string $stmt): void
+    {
+        if ($this->deferredFh !== null) {
+            $stmt = $this->deferIfNeeded($stmt);
+            if ($stmt === null) {
+                return;
+            }
+        }
+
+        $this->db->unprepared($stmt);
+    }
+
+    /**
+     * Devolve o que roda agora, ou null quando o comando inteiro foi guardado.
+     *
+     * No MySQL/MariaDB a FK vem dentro do CREATE TABLE da tabela filha, e o
+     * servidor recusa criar a FK contra a tabela pai antiga quando o tipo da
+     * coluna difere (restore entre motores), mesmo com FOREIGN_KEY_CHECKS=0.
+     * Essas FKs saem do CREATE e voltam como ALTER TABLE junto com as tabelas
+     * guardadas. No PostgreSQL elas já são ALTER TABLE separados.
+     */
+    private function deferIfNeeded(string $stmt): ?string
+    {
+        $table = self::statementTable($stmt);
+        $deferred = $table !== null && in_array($table, $this->deferredTables, true);
+
+        // `SELECT setval(pg_get_serial_sequence('users', 'id'), ...)` do PostgreSQL.
+        if (! $deferred && preg_match("/pg_get_serial_sequence\\('([^']+)'/i", $stmt, $m)) {
+            $deferred = in_array($m[1], $this->deferredTables, true);
+        }
+
+        if (! $deferred && $table !== null && preg_match('/\\AALTER TABLE/i', $stmt)) {
+            foreach ($this->deferredTables as $t) {
+                if (preg_match('/REFERENCES\\s+[`"]?'.preg_quote($t, '/').'[`"]?\\s*\\(/i', $stmt)) {
+                    $deferred = true;
+                    break;
+                }
+            }
+        }
+
+        if ($deferred) {
+            $this->writeDeferred($stmt);
+            return null;
+        }
+
+        if ($table !== null && preg_match('/\\ACREATE TABLE/i', $stmt)) {
+            foreach ($this->deferredTables as $t) {
+                $fk = '/,\\s*(CONSTRAINT\\s+`[^`]+`\\s+FOREIGN KEY\\s*\\([^)]*\\)\\s*REFERENCES\\s+`'.preg_quote($t, '/')
+                    .'`\\s*\\([^)]*\\)(?:\\s+ON\\s+(?:DELETE|UPDATE)\\s+(?:CASCADE|SET NULL|SET DEFAULT|RESTRICT|NO ACTION))*)/i';
+                $stmt = (string) preg_replace_callback($fk, function (array $m) use ($table) {
+                    $this->writeDeferred('ALTER TABLE `'.$table.'` ADD '.$m[1]);
+                    return '';
+                }, $stmt);
+            }
+        }
+
+        return $stmt;
+    }
+
+    private function writeDeferred(string $stmt): void
+    {
+        if (fwrite($this->deferredFh, $stmt.DatabaseDumper::STATEMENT_DELIMITER) === false) {
+            throw new \RuntimeException('Could not write the deferred statements.');
+        }
+    }
+
+    /** Tabela que o comando cria, apaga, altera ou preenche. */
+    public static function statementTable(string $stmt): ?string
+    {
+        $pattern = '/\\A(?:DROP TABLE IF EXISTS|CREATE TABLE(?: IF NOT EXISTS)?|INSERT INTO|ALTER TABLE(?: ONLY)?'
+            .'|CREATE (?:UNIQUE )?INDEX\\s+(?:`[^`]+`|"[^"]+"|\\S+)\\s+ON)\\s+[`"]?([^`"\\s(]+)[`"]?/i';
+
+        return preg_match($pattern, $stmt, $m) ? $m[1] : null;
     }
 
     public function statementsRun(): int
@@ -107,10 +200,8 @@ class DatabaseRestorer
     }
 
     /**
-     * Bytes ainda no buffer — a cauda depois do último delimitador, que
-     * `executeReady()` segurou por não estar terminada. Zero significa que
-     * o stream parou exatamente numa fronteira de statement, que é a única
-     * posição em que o chamador pode persistir seu cursor.
+     * Bytes da cauda depois do último delimitador. Zero quer dizer fronteira
+     * de statement, a única posição em que o chamador pode salvar o cursor.
      */
     public function pendingBytes(): int
     {
@@ -118,20 +209,28 @@ class DatabaseRestorer
     }
 
     /**
-     * Best-effort "suspend FK enforcement for this connection". Engine
-     * matrix:
-     *   - MySQL/MariaDB: `SET FOREIGN_KEY_CHECKS = 0`
-     *   - SQLite:        `PRAGMA foreign_keys = OFF`
-     *   - PostgreSQL:    no-op — `session_replication_role = 'replica'`
-     *                    requires superuser, so we cannot rely on it
-     *                    on managed hosts (RDS/Neon/Supabase). Instead,
-     *                    PG dumps emit FK constraints as separate
-     *                    `ALTER TABLE ADD CONSTRAINT` statements AFTER
-     *                    all data is loaded, so there is nothing to
-     *                    suspend during the INSERT phase to begin with.
-     *
-     * Each tick gets a fresh PDO session, so callers must invoke this
-     * at the start of every tick that runs SQL.
+     * Estado de sessão do preâmbulo, reaplicado a cada tick: pela web cada
+     * tick abre uma conexão nova e o preâmbulo só roda no primeiro. Sem
+     * `standard_conforming_strings = on` uma barra invertida num post fecha o
+     * literal no PostgreSQL; sem `NO_AUTO_VALUE_ON_ZERO` um id 0 vira o
+     * próximo auto-increment. Se falhar, o restore para.
+     */
+    public static function prepareSession(Connection $db): void
+    {
+        match (Dialect::detect($db)) {
+            Dialect::MYSQL,
+            Dialect::MARIADB  => $db->unprepared("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'"),
+            Dialect::POSTGRES => $db->unprepared('SET standard_conforming_strings = on'),
+            Dialect::SQLITE   => null,
+        };
+
+        self::disableForeignKeys($db);
+    }
+
+    /**
+     * Suspende as FKs nesta conexão, sem garantia. No PostgreSQL é no-op:
+     * `session_replication_role` exige superuser, indisponível em hosts
+     * gerenciados, e o dump já cria as FKs depois dos dados.
      */
     public static function disableForeignKeys(Connection $db): void
     {
@@ -140,7 +239,7 @@ class DatabaseRestorer
                 Dialect::MYSQL,
                 Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 0'),
                 Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = OFF'),
-                Dialect::POSTGRES => null, // see docblock
+                Dialect::POSTGRES => null, // ver docblock
             };
         } catch (Throwable) { /* best-effort */ }
     }
@@ -152,7 +251,7 @@ class DatabaseRestorer
                 Dialect::MYSQL,
                 Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 1'),
                 Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = ON'),
-                Dialect::POSTGRES => null, // see docblock on disableForeignKeys
+                Dialect::POSTGRES => null, // ver disableForeignKeys
             };
         } catch (Throwable) { /* best-effort */ }
     }

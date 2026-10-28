@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Laminas\Diactoros\Response\JsonResponse;
@@ -9,9 +18,8 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Models\Backup;
 
 /**
- * Returns every saved backup, newest first. Cheap query — the admin UI
- * shows them all on one screen rather than paginating, since the row
- * count is bounded by how often anyone clicks "create backup".
+ * Backups salvos, mais recentes primeiro. Sem paginação: são poucos e o
+ * painel mostra todos numa tela.
  */
 class ListBackupsController implements RequestHandlerInterface
 {

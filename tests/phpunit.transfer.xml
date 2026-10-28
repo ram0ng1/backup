@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../vendor/phpunit/phpunit/phpunit.xsd"
+    bootstrap="../vendor/autoload.php"
+    backupGlobals="false"
+    cacheDirectory="../.phpunit.cache"
+    backupStaticProperties="false"
+    colors="true"
+    processIsolation="false"
+    stopOnFailure="false"
+    failOnRisky="true"
+    failOnWarning="true"
+>
+    <source>
+        <include>
+            <directory suffix=".php">../src/</directory>
+        </include>
+    </source>
+    <!-- Dump e restore reais entre motores. Motor sem variável (ou fora do
+         ar) é pulado, então a suíte roda só com SQLite numa máquina limpa;
+         a CI preenche as variáveis por célula. -->
+    <testsuites>
+        <testsuite name="transfer">
+            <directory suffix="Test.php">./transfer</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="BACKUP_TEST_MYSQL" value=""/>
+        <env name="BACKUP_TEST_MARIADB" value=""/>
+        <env name="BACKUP_TEST_POSTGRES" value=""/>
+    </php>
+</phpunit>

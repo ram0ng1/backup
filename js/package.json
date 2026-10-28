@@ -5,6 +5,8 @@
   "version": "1.0.0",
   "private": true,
   "devDependencies": {
+    "@flarum/prettier-config": "^1.0.0",
+    "cross-env": "^10.1.0",
     "flarum-tsconfig": "^2.0.0",
     "flarum-webpack-config": "^3.1.0",
     "prettier": "^3.9.10",
@@ -15,8 +17,10 @@
   "scripts": {
     "dev": "webpack --mode development --watch",
     "build": "webpack --mode production",
-    "check-typings": "tsc --noEmit --emitDeclarationOnly false",
+    "analyze": "cross-env ANALYZER=true npm run build",
     "format": "prettier --write src",
-    "format-check": "prettier --check src"
-  }
+    "format-check": "prettier --check src",
+    "check-typings": "tsc --noEmit --emitDeclarationOnly false"
+  },
+  "prettier": "@flarum/prettier-config"
 }

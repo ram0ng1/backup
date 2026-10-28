@@ -1,0 +1,65 @@
+.BackupEncryptionCard {
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--body-bg);
+
+  header {
+    margin-bottom: 12px;
+  }
+}
+
+.BackupEncryption-statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.BackupEncryption-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+
+  .icon { font-size: 14px; }
+}
+.BackupEncryption-badge--ok {
+  background: rgba(46, 204, 113, 0.10);
+  border-color: rgba(46, 204, 113, 0.30);
+  color: #2ecc71;
+}
+.BackupEncryption-badge--missing {
+  background: rgba(231, 76, 60, 0.10);
+  border-color: rgba(231, 76, 60, 0.30);
+  color: #e74c3c;
+}
+.BackupEncryption-badgeState {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.BackupEncryption-publicKey {
+  margin-top: 12px;
+
+  pre {
+    flex: 1;
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--control-bg, rgba(0, 0, 0, 0.06));
+    border-radius: 6px;
+    overflow-x: auto;
+    word-break: break-all;
+    font-size: 11px;
+  }
+}
+.BackupEncryption-publicKeyRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}

@@ -1,14 +1,20 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Database\Schema;
 
 /**
- * Engine-neutral column "shape" — what every emitter and introspector
- * agrees on. The native engine types are normalised into one of these
- * before generating target SQL.
- *
- * Names are deliberately MySQL-ish (the largest type vocabulary), with
- * a few extras (UUID, JSON) that map cleanly to other engines.
+ * Tipo neutro de coluna, comum a introspectors e emitters. Os nomes
+ * seguem o MySQL (o vocabulário mais amplo), com alguns extras (UUID, JSON)
+ * que mapeiam bem nos outros engines.
  */
 enum ColumnType: string
 {

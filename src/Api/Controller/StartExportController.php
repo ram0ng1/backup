@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Flarum\Http\RequestUtil;
@@ -12,15 +21,13 @@ use Ramon\Backup\Job\ExportJob;
 /**
  * POST /api/backup/exports
  *
- * Body:
- *   contents:        { db, assets, storage, extensions } (booleans)
+ * Corpo:
+ *   contents:        { db, assets, storage, extensions } (booleanos)
  *   encryption:      { enabled, public_key? }
- *   target_dialect:  optional string ("mysql", "mariadb", "postgres",
- *                    "sqlite") — engine the dump should target. Omit
- *                    or leave blank for a same-engine backup.
+ *   target_dialect:  opcional ("mysql", "mariadb", "postgres", "sqlite");
+ *                    vazio gera dump para o mesmo banco.
  *
- * Creates a new job state file and returns the job id. The frontend
- * then polls /tick to make progress.
+ * Cria o job e devolve o id; o frontend avança com /tick.
  */
 class StartExportController implements RequestHandlerInterface
 {
@@ -44,10 +51,7 @@ class StartExportController implements RequestHandlerInterface
             : null;
         if ($targetDialect === '') $targetDialect = null;
 
-        // `contents.extensions` is permissive on purpose:
-        //   true     → bundle every installed extension
-        //   false    → bundle none
-        //   string[] → bundle these specific extension ids
+        // `contents.extensions`: true (todas), false (nenhuma) ou lista de ids.
         $extensions = $contents['extensions'] ?? false;
         if (is_array($extensions)) {
             $extensions = array_values(array_filter(array_map(

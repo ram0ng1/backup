@@ -1,29 +1,33 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Project;
 
 use Flarum\Foundation\Paths;
+use Ramon\Backup\Locale\Messages;
 use Throwable;
 
 /**
- * Aplica os arquivos da raiz do projeto (`project/*` no arquivo) sobre a
- * instalação de destino — e é o único ponto do import autorizado a
- * escrever fora de assets/, storage/ e dos diretórios de extensão.
+ * Aplica os arquivos da raiz do projeto (`project/*` no arquivo) no
+ * destino; é o único ponto do import que escreve fora de assets/, storage/
+ * e dos diretórios de extensão.
  *
- * O import extrai `project/*` para um diretório de staging dentro do job
- * em vez de gravar direto no destino. Isso existe porque sobrescrever o
- * `composer.json` do destino com o da origem é destrutivo: o manifesto
- * descreve o SERVIDOR, não o fórum. Um destino que instalou fof/redis
- * depois do backup perde o require, e o `composer install` seguinte poda
- * o pacote do vendor/ — deixando o `extend.php` da raiz apontando para
- * uma classe que não existe mais e derrubando o boot antes do handler de
- * erro existir.
- *
- * Regras:
- *   - destino SEM composer.json  → recuperação em servidor limpo; grava
- *     composer.json e composer.lock verbatim.
- *   - destino COM composer.json  → merge aditivo dos requires (o destino
- *     vence em conflito de constraint) e o composer.lock NUNCA é gravado.
+ * O `composer.json` descreve o SERVIDOR, não o fórum: sobrescrevê-lo
+ * apagaria requires que o destino instalou depois do backup, e o
+ * `composer install` seguinte deixaria o `extend.php` da raiz apontando
+ * para classes que não existem mais. Por isso:
+ *   - destino SEM composer.json: servidor limpo; composer.json e
+ *     composer.lock vão como estão.
+ *   - destino COM composer.json: merge aditivo dos requires (o destino
+ *     vence em conflito) e o composer.lock NUNCA é gravado.
  */
 class ProjectReconciler
 {
@@ -34,7 +38,8 @@ class ProjectReconciler
     private const MERGED_MAPS = ['require', 'require-dev', 'conflict', 'replace', 'provide'];
 
     public function __construct(
-        protected Paths $appPaths
+        protected Paths $appPaths,
+        protected Messages $messages
     ) {
     }
 
@@ -63,10 +68,8 @@ class ProjectReconciler
     }
 
     /**
-     * Une o manifesto do arquivo ao do destino. Sempre calcula o diff dos
-     * requires — mesmo quando não vai gravar — porque saber quais pacotes
-     * as extensões restauradas exigem é o que evita descobrir a falta só
-     * quando o fórum não sobe.
+     * Calcula o diff dos requires mesmo quando não grava: é o que avisa quais
+     * pacotes as extensões restauradas exigem antes de o fórum não subir.
      *
      * @return array{warnings: list<string>, applied: list<string>}
      */
@@ -80,7 +83,7 @@ class ProjectReconciler
         $incoming = $this->decodeJson($incomingPath);
         if ($incoming === null) {
             return [
-                'warnings' => ['O composer.json do arquivo não é JSON válido — manifesto do destino mantido intacto.'],
+                'warnings' => [$this->messages->get('project.incoming_invalid_json')],
                 'applied'  => [],
             ];
         }
@@ -97,7 +100,7 @@ class ProjectReconciler
         $current = $this->decodeJson($destPath);
         if ($current === null) {
             return [
-                'warnings' => ['O composer.json deste servidor não é JSON válido — merge abortado para não piorar o estado.'],
+                'warnings' => [$this->messages->get('project.local_invalid_json')],
                 'applied'  => [],
             ];
         }
@@ -120,7 +123,7 @@ class ProjectReconciler
         );
         if ($encoded === false) {
             return [
-                'warnings' => array_merge($warnings, ['Falha ao serializar o composer.json unido — manifesto do destino mantido intacto.']),
+                'warnings' => array_merge($warnings, [$this->messages->get('project.encode_failed')]),
                 'applied'  => [],
             ];
         }
@@ -128,14 +131,12 @@ class ProjectReconciler
         $this->backup($destPath);
         if (@file_put_contents($destPath, $encoded."\n", LOCK_EX) === false) {
             return [
-                'warnings' => array_merge($warnings, ['Não foi possível gravar o composer.json unido (permissão?).']),
+                'warnings' => array_merge($warnings, [$this->messages->get('project.write_failed')]),
                 'applied'  => [],
             ];
         }
 
-        $warnings[] = 'composer.json unido ao do destino (nada foi removido). '
-            .'O composer.lock do arquivo NÃO foi aplicado: um lock de outro servidor poda pacotes '
-            .'que só existem aqui. Rode `composer update --lock` para regravar o lock local.';
+        $warnings[] = $this->messages->get('project.merged');
 
         return ['warnings' => $warnings, 'applied' => ['composer.json']];
     }
@@ -161,7 +162,7 @@ class ProjectReconciler
         }
 
         return [
-            'warnings' => ['Servidor sem composer.json — manifesto e lock do arquivo aplicados verbatim. Rode `composer install`.'],
+            'warnings' => [$this->messages->get('project.fresh_manifest')],
             'applied'  => $applied,
         ];
     }
@@ -185,20 +186,16 @@ class ProjectReconciler
 
         $onlyHere = array_diff_key($here, $there);
         if ($onlyHere !== []) {
-            $warnings[] = sprintf(
-                'Pacotes que existem só neste servidor e NÃO estavam no backup (preservados pelo merge): %s. '
-                .'Confirme que o extend.php da raiz e as extensões restauradas continuam compatíveis com eles.',
-                $this->summarise(array_keys($onlyHere))
-            );
+            $warnings[] = $this->messages->get('project.only_here', [
+                'packages' => $this->summarise(array_keys($onlyHere)),
+            ]);
         }
 
         $onlyThere = array_diff_key($there, $here);
         if ($onlyThere !== []) {
-            $warnings[] = sprintf(
-                'Pacotes exigidos pelo backup e ausentes deste servidor: %s. '
-                .'Rode `composer install` para materializá-los antes de considerar a migração concluída.',
-                $this->summarise(array_keys($onlyThere))
-            );
+            $warnings[] = $this->messages->get('project.only_there', [
+                'packages' => $this->summarise(array_keys($onlyThere)),
+            ]);
         }
 
         return $warnings;
@@ -223,31 +220,24 @@ class ProjectReconciler
 
         if (! @copy($incoming, $destPath)) {
             return [
-                'warnings' => ['Não foi possível gravar o extend.php da raiz (permissão?).'],
+                'warnings' => [$this->messages->get('project.extend_write_failed')],
                 'applied'  => [],
             ];
         }
 
         return [
-            'warnings' => ['extend.php da raiz substituído pelo do backup (cópia do anterior salva como .bak-*).'],
+            'warnings' => [$this->messages->get('project.extend_replaced')],
             'applied'  => ['extend.php'],
         ];
     }
 
     /**
-     * Varre o extend.php da raiz procurando classes referenciadas que o
-     * autoloader não resolve.
+     * Classes citadas no extend.php da raiz que o autoloader não resolve.
      *
-     * Existe por causa do modo de falha que motivou esta camada: o core
-     * dá `require` nesse arquivo dentro de `Site::fromPaths()`, antes de
-     * qualquer handler de erro — uma classe ausente vira fatal com exit
-     * 255, saída vazia e log do Flarum vazio. Detectar aqui troca o 500
-     * mudo por um aviso nomeando a classe.
-     *
-     * Análise estática: o arquivo NUNCA é executado (dar `require` nele
-     * teria efeito colateral). A checagem usa o autoloader vivo, então
-     * enxerga o vendor/ como está no disco agora — não o que sobrará
-     * depois de um `composer install`.
+     * O core dá `require` nesse arquivo em `Site::fromPaths()`, antes de
+     * qualquer handler de erro: classe ausente vira fatal com saída e log
+     * vazios. Aqui o 500 mudo vira um aviso com o nome da classe. Análise
+     * estática (o arquivo nunca é executado) contra o vendor/ atual.
      *
      * @return list<string> FQCNs não resolvidos.
      */
@@ -570,17 +560,14 @@ class ProjectReconciler
     }
 
     /**
-     * Lê um arquivo local do próprio install: o manifesto da raiz, o
-     * extend.php da raiz, ou o staging deste job.
-     *
-     * O caminho deriva SEMPRE de {@see Paths} ou do diretório do job —
-     * nunca de input de requisição —, então o alerta de SSRF do semgrep
-     * é falso positivo. Concentrar a leitura aqui deixa a supressão num
-     * ponto só, em vez de espalhada por cada chamada.
+     * Lê arquivos do próprio install (manifesto, extend.php da raiz ou
+     * staging do job). O caminho vem sempre de {@see Paths} ou do diretório
+     * do job, nunca da requisição; centralizar aqui deixa a supressão do
+     * semgrep num ponto só.
      */
     private function readLocalFile(string $path): ?string
     {
-        $raw = @file_get_contents($path); /* caminho derivado de Paths, nunca de request; nosemgrep: flarum-v2-server-side-fetch */
+        $raw = @file_get_contents($path); /* caminho de Paths, nunca de request; nosemgrep: flarum-v2-server-side-fetch */
         return $raw === false ? null : $raw;
     }
 }

@@ -3,8 +3,8 @@ name: Release Workflow
 on:
   # Dispara quando um PR é MESCLADO no main carregando a label "release".
   # O tipo de incremento vem das labels do PR:
-  #   - label "BC"        => minor (ex.: 2.0.14 -> 2.1.0)
-  #   - qualquer outra    => patch (ex.: 2.0.14 -> 2.0.15)
+  #   - label "BC"        => minor (ex.: 2.1.25 -> 2.2.0)
+  #   - qualquer outra    => patch (ex.: 2.1.25 -> 2.1.26)
   # A versão é derivada da ÚLTIMA TAG git — o composer.json NÃO tem mais
   # campo "version" (fonte única de verdade = tags do VCS).
   pull_request:
@@ -25,10 +25,10 @@ on:
           - minor
           - major
 
-# §35.13 C1 — default-deny. Job declara o que precisa.
+# Nega tudo ao GITHUB_TOKEN por padrão; o job declara o que precisa.
 permissions: {}
 
-# §35.13 I4 — serializa releases; nunca cancela um em andamento (um release
+# Serializa releases e nunca cancela um em andamento (um release
 # pela metade exigiria limpeza manual de tag).
 concurrency:
   group: release
@@ -46,12 +46,12 @@ jobs:
     permissions:
       contents: write          # cria tag/release
       pull-requests: read      # release-drafter lê PRs mesclados
-      id-token: write          # §35.13 R4 — attest-build-provenance
-      attestations: write      # §35.13 R4
+      id-token: write          # attest-build-provenance
+      attestations: write      # attest-build-provenance
     steps:
-      # §35.13 I3 — auditar todo egress (em modo audit; promover a block depois).
+      # Audita todo o egress (modo audit por enquanto; depois, block).
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
         with:
           egress-policy: audit
 
@@ -138,9 +138,91 @@ jobs:
             echo "bump=${BUMP}"
           } >> "$GITHUB_OUTPUT"
 
+      # Só pede `php flarum migrate` quando a release traz migração nova desde a
+      # última tag. Arquivo novo em migrations/ é o único sinal confiável: uma
+      # migração já publicada e depois editada não roda de novo.
+      - name: Montar instruções de atualização
+        id: upgrade
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          LATEST="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1 || true)"
+
+          if [ -n "$LATEST" ]; then
+            NEW_MIGRATIONS="$(git diff --name-only --diff-filter=A "$LATEST" HEAD -- migrations/ || true)"
+          else
+            NEW_MIGRATIONS="$(git ls-files migrations/)"
+          fi
+
+          {
+            echo "## 📦 Como atualizar"
+            echo
+            if [ -n "$NEW_MIGRATIONS" ]; then
+              echo "> [!IMPORTANT]"
+              echo "> Esta versão altera o banco de dados. Rode \`php flarum migrate\` depois de atualizar."
+              echo
+            fi
+            echo '```bash'
+            echo "composer require ramon/backup:${VERSION}"
+            if [ -n "$NEW_MIGRATIONS" ]; then
+              echo "php flarum migrate"
+            fi
+            echo "php flarum cache:clear"
+            echo "php flarum assets:publish"
+            echo '```'
+          } > "$RUNNER_TEMP/upgrade.md"
+
+          if [ -n "$NEW_MIGRATIONS" ]; then
+            echo "Migrações novas desde ${LATEST:-<sem tag>}:"
+            echo "$NEW_MIGRATIONS"
+            echo "migrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nenhuma migração nova desde ${LATEST:-<sem tag>}."
+            echo "migrate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
+
+          cat "$RUNNER_TEMP/upgrade.md"
+
+      # As notas em inglês, com links absolutos para o GitHub, depois do
+      # pt-BR: prontas para colar fora dele (o tópico da extensão no
+      # discuss.flarum.org). O título em inglês de cada PR vem da linha
+      # "EN: …" da descrição do PR; sem ela, vai o título do PR. O marcador
+      # `<!-- en -->` separa as duas partes (o post do fórum leva só o pt-BR).
+      - name: Notas em inglês
+        id: notes_en
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          LATEST_TAG: ${{ steps.upgrade.outputs.latest }}
+          MIGRATE: ${{ steps.upgrade.outputs.migrate }}
+          OUTPUT: ${{ runner.temp }}/notes-en.md
+        run: |
+          set -euo pipefail
+
+          node .github/scripts/release-notes-en.mjs
+
+          DELIM="EOF_$(openssl rand -hex 8)"
+          {
+            echo "footer<<${DELIM}"
+            cat "$RUNNER_TEMP/upgrade.md"
+            echo
+            echo "<!-- en -->"
+            echo
+            echo "---"
+            echo
+            cat "$OUTPUT"
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
+
+          cat "$OUTPUT"
+
       - name: Publicar Release
         id: create_release
-        uses: release-drafter/release-drafter@ed4bc48ec97379be2258e7b7ac2624a3e26ab809  # v7.4.0
+        uses: release-drafter/release-drafter@eada3c96a64734dd381cfbda23511034e328ddb0  # v7.6.0
         with:
           publish: true
           # Versão calculada acima — sobrepõe o version-resolver do
@@ -151,13 +233,16 @@ jobs:
           # Aponta a tag/release para o commit de merge real (não para o
           # merge simulado do evento pull_request).
           commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          # "Como atualizar" (com `php flarum migrate` só quando há migração
+          # nova) e as notas em inglês, montados nos passos anteriores.
+          footer: ${{ steps.notes_en.outputs.footer }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # §35.13 R4 — provenance assinada (SLSA) para os artefatos do release.
+      # Provenance assinada (SLSA) para os artefatos do release.
       - name: Atestar provenance dos artefatos
         if: steps.create_release.outcome == 'success'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-path: |
             composer.json
@@ -173,6 +258,8 @@ jobs:
           RELEASE_URL: ${{ steps.create_release.outputs.html_url }}
         run: |
           VERSION="${RELEASE_TAG#v}"
+          # Só o pt-BR: as notas em inglês (depois do marcador) são para o discuss.
+          RELEASE_BODY="${RELEASE_BODY%%<!-- en -->*}"
 
           PAYLOAD=$(jq -n \
             --arg tag "$RELEASE_TAG" \
@@ -221,4 +308,5 @@ jobs:
           echo "Bump:        ${{ steps.version.outputs.bump }}"
           echo "Nova versão: ${{ steps.version.outputs.version }}"
           echo "Tag:         ${{ steps.version.outputs.tag }}"
+          echo "Migrate:     ${{ steps.upgrade.outputs.migrate }}"
           echo "Release URL: ${{ steps.create_release.outputs.html_url }}"

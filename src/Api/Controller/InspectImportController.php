@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Api\Controller;
 
 use Flarum\Foundation\ValidationException;
@@ -7,39 +16,35 @@ use Laminas\Diactoros\Response\JsonResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Archive\ArchiveMeta;
 use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Environment\StackSnapshot;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
  * POST /api/backup/imports/{id}/inspect
  *
- * Final step of the chunked upload. The staging file should now be
- * complete (size == expected_size from init). We open the archive
- * header WITHOUT decrypting, return is_encrypted + meta, and let the
- * UI decide whether to ask for a private key. The actual restore is
- * still kicked off by /backup/imports/{id}/start.
- *
- * If the staging file is short of the declared size, we refuse —
- * the caller should retry the missing chunks first. Returning a
- * partial inspect would mislead the UI.
+ * Fecha o upload: lê o cabeçalho sem decifrar e diz se o arquivo está
+ * cifrado. Recusa upload menor que o tamanho declarado.
  */
 class InspectImportController implements RequestHandlerInterface
 {
     use AdminOnlyController;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         $jobId = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $jobId)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $dir  = $this->paths->importJobDir($jobId);
@@ -47,7 +52,7 @@ class InspectImportController implements RequestHandlerInterface
 
         if (! is_file($dest)) {
             throw new ValidationException([
-                'archive' => 'Upload session not initialised or already cleaned up.',
+                'archive' => $this->messages->get('errors.upload_gone'),
             ]);
         }
 
@@ -57,10 +62,7 @@ class InspectImportController implements RequestHandlerInterface
 
         if ($expected > 0 && $actual < $expected) {
             throw new ValidationException([
-                'archive' => sprintf(
-                    'Upload incomplete: %d / %d bytes received. Re-send missing chunks before inspect.',
-                    $actual, $expected
-                ),
+                'archive' => $this->messages->get('errors.upload_incomplete', ['received' => $actual, 'expected' => $expected]),
             ]);
         }
 
@@ -72,18 +74,14 @@ class InspectImportController implements RequestHandlerInterface
         } catch (\Throwable $e) {
             $this->paths->deleteDir($dir);
             throw new ValidationException([
-                'archive' => 'Not a valid Flarum backup: '.$e->getMessage(),
+                'archive' => $this->messages->get('errors.invalid_archive', ['error' => $e->getMessage()]),
             ]);
         }
 
-        // Stack gate at inspect time — the operator learns the restore
-        // is impossible BEFORE ticking "confirm replace", instead of
-        // after committing. ImportJob re-checks it as the authoritative
-        // backstop for the CLI and for direct API callers that skip
-        // inspect. The staged upload is left in place so a retry after
-        // a PHP upgrade doesn't need a re-upload; PruneStaleJobsCommand
-        // sweeps it if the operator walks away.
-        $blocking = StackSnapshot::blockingReason($archiveMeta);
+        // Barra aqui o stack incompatível, antes da confirmação; o ImportJob
+        // checa de novo para CLI e chamadas diretas. O upload fica para não
+        // precisar reenviar após atualizar o PHP; o prune limpa depois.
+        $blocking = StackSnapshot::blockingReason($archiveMeta, null, $this->messages);
         if ($blocking !== null) {
             throw new ValidationException(['archive' => $blocking]);
         }
@@ -91,9 +89,9 @@ class InspectImportController implements RequestHandlerInterface
         return new JsonResponse([
             'job_id'       => $jobId,
             'is_encrypted' => $isEncrypted,
-            'meta'         => $archiveMeta,
+            'meta'         => ArchiveMeta::forDisplay($archiveMeta),
             'size'         => $actual,
-            'advisories'   => StackSnapshot::advisories($archiveMeta),
+            'advisories'   => StackSnapshot::advisories($archiveMeta, $this->messages),
         ]);
     }
 

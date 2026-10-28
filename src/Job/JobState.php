@@ -1,23 +1,22 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup\Job;
 
 use RuntimeException;
 
 /**
- * Simple JSON-backed state file for a long-running export or import.
- *
- * Each tick of the JS-driven progress loop:
- *   1. `JobState::load($file)` — read previous progress
- *   2. The tick worker mutates the state in PHP
- *   3. `$state->save()` — atomic-rename the JSON back to disk
- *
- * Any binary blobs (the libsodium secretstream state, partial buffers
- * from the encrypted writer) are stored base64-encoded under the
- * `binary` key so the JSON stays UTF-8.
- *
- * No file locking is needed because each job ID is single-threaded by
- * convention: the JS only fires one tick at a time per job.
+ * Estado em JSON de uma exportação ou importação longa, lido e regravado a
+ * cada tick. Blobs binários (estado do secretstream, buffers) vão em base64
+ * sob `binary`. Sem trava: o JS dispara um tick por vez por job.
  */
 class JobState
 {
@@ -65,10 +64,9 @@ class JobState
         if (@file_put_contents($tmp, $encoded) === false) {
             throw new RuntimeException('Could not write job state.');
         }
-        // rename() is atomic on POSIX; on Windows it's "best effort" but
-        // good enough for our trust level (single-writer, single-reader).
+        // rename() é atômico no POSIX; no Windows é só "melhor esforço", o que
+        // basta com um único escritor e um único leitor.
         if (! @rename($tmp, $this->file)) {
-            // Fallback: copy + unlink.
             if (! @copy($tmp, $this->file)) {
                 throw new RuntimeException('Could not commit job state.');
             }
@@ -87,8 +85,7 @@ class JobState
     }
 
     /**
-     * Persist a binary blob (e.g. libsodium secretstream state). Stored
-     * base64 under `binary.<key>` so JSON encoding stays clean.
+     * Guarda em base64 sob `binary.<key>` para o JSON continuar válido.
      */
     public function setBinary(string $key, string $value): void
     {
@@ -101,6 +98,15 @@ class JobState
         if (! isset($this->data['binary'][$key])) return null;
         $decoded = base64_decode($this->data['binary'][$key], true);
         return $decoded === false ? null : $decoded;
+    }
+
+    /**
+     * Apaga os blobs binários. O estado do secretstream decifra o resto do
+     * arquivo, então ele sai do job.json assim que o job termina.
+     */
+    public function forgetBinary(): void
+    {
+        unset($this->data['binary']);
     }
 
     public function file(): string

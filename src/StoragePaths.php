@@ -1,27 +1,34 @@
 <?php
 
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace Ramon\Backup;
 
 use Flarum\Foundation\Paths;
 
 /**
- * Single source of truth for the layout under `storage/`. Keeping the
- * paths centralised makes it harder for one controller to compute a
- * different absolute path than another (which would let an attacker
- * craft a token that resolves into a different directory).
+ * Fonte única dos caminhos sob `storage/`. Centralizar evita que dois
+ * controllers resolvam o mesmo token para diretórios diferentes.
  *
- * Layout:
+ * Estrutura:
  *   storage/
  *     backups/
- *       <id>-<random>.flarum         — finalised backups served by download
+ *       <id>-<random>.flarum         — backups prontos, servidos pelo download
  *     backup-tmp/
- *       export-<id>/                 — per-job staging dir (deleted on finish)
- *         job.json                   — resumable job state
- *         dump.sql                   — DB dump being assembled
- *         archive.partial            — archive being written
+ *       export-<id>/                 — staging do job (apagado ao terminar)
+ *         job.json                   — estado retomável do job
+ *         dump.sql                   — dump do banco em montagem
+ *         archive.partial            — arquivo em escrita
  *       import-<id>/
- *         upload.flarum              — uploaded archive (full or chunked)
- *         job.json                   — resumable import state
+ *         upload.flarum              — arquivo enviado (inteiro ou em partes)
+ *         job.json                   — estado retomável da importação
  */
 class StoragePaths
 {
@@ -66,18 +73,14 @@ class StoragePaths
 
     public function backupFilePath(string $filename): ?string
     {
-        // Restrict to the alphabet our generator uses — no separators,
-        // no dots beyond the trailing extension. Anything weird means
-        // the filename came from somewhere we don't trust.
+        // Só o alfabeto do nosso gerador: sem separadores nem pontos extras.
         if (! preg_match('/^[A-Za-z0-9_-]+\.flarum$/', $filename)) {
             return null;
         }
         $candidate = $this->backupsDir() . DIRECTORY_SEPARATOR . $filename;
 
-        // Normalise BOTH sides through realpath before comparing —
-        // on Windows the Paths::$storage value can differ in case
-        // (D:\laragon\... vs realpath's D:\Laragon\...), which would
-        // break a naive str_starts_with even though the file is fine.
+        // realpath nos dois lados e comparação sem caixa: no Windows o
+        // Paths::$storage pode vir com caixa diferente da do realpath.
         $real = realpath($candidate);
         $base = realpath($this->backupsDir());
         if ($real === false || $base === false) {
@@ -98,8 +101,7 @@ class StoragePaths
     }
 
     /**
-     * Recursively delete a directory under tmp/. Refuses to touch
-     * anything outside `tmpDir()` for paranoia.
+     * Apaga recursivamente; recusa qualquer caminho fora de `tmpDir()`.
      */
     public function deleteDir(string $absolutePath): void
     {
@@ -113,14 +115,9 @@ class StoragePaths
     }
 
     /**
-     * Absolute paths of `export-*` / `import-*` staging dirs whose
-     * `job.json` (or the dir itself, if that file is gone) was last
-     * touched more than `$maxAgeSeconds` ago. Used by the scheduled
-     * pruner to reclaim space and clear any lingering plaintext
-     * `dump.sql` left behind by an errored or abandoned job — a tab
-     * closed mid-export, a job that hit the `error` phase, etc. An
-     * active job is safe: every tick re-saves `job.json`, so its mtime
-     * stays fresh and stays under any sane TTL.
+     * Diretórios `export-*` / `import-*` cujo `job.json` (ou o próprio
+     * diretório, sem ele) não muda há mais de `$maxAgeSeconds`. Job ativo
+     * nunca entra: cada tick regrava o `job.json`.
      *
      * @return list<string>
      */
@@ -162,23 +159,10 @@ class StoragePaths
     }
 
     /**
-     * Create one of our storage directories, owner-only (0700).
-     *
-     * Everything under here is sensitive: finalised `.flarum` archives
-     * in backups/, and — in backup-tmp/ — the decrypted `dump.sql` (the
-     * whole database in plaintext, password hashes and emails included),
-     * the uploaded archive, and the job state. None of it is ever read
-     * directly by the web server: downloads are streamed by PHP itself
-     * (see DownloadBackupController). So no group/other access is needed,
-     * and 0700 stops another account on a shared host from reading these
-     * files — the same shared-host threat model the import key handling
-     * guards against (see ImportJob::$privateKey).
-     *
-     * NB: only newly created directories get 0700; an existing dir keeps
-     * whatever perms it already has, so this can't disrupt a live install.
-     * Created with explicit 0700 (umask only ever *removes* bits, and
-     * 0700 has none in the group/other range, so the result is exactly
-     * 0700 regardless of the server's umask).
+     * Cria o diretório com 0700. Aqui ficam os backups e o banco inteiro em
+     * texto puro (dump.sql); como o download passa pelo PHP, nenhuma outra
+     * conta da hospedagem compartilhada precisa ler. Diretórios que já
+     * existem mantêm as permissões atuais.
      */
     private function ensureDir(string $dir): void
     {

@@ -1,35 +1,41 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+/*
+ * This file is part of ramon/backup.
+ *
+ * Copyright (c) 2026 Ramon Guilherme.
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Ramon\Backup\Tests\transfer;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Schema\Blueprint;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
 use Ramon\Backup\Tests\Support\Fixture;
 
 /**
- * The most complete e2e: for EVERY ordered (source → target) engine pair
- * it runs the real, full pipeline — `ExportJob` packs the source into an
- * actual `.flarum` archive, then `ImportJob` unpacks and restores that
- * archive into the target — and verifies the data survived. This is the
- * exact path the `backup:export` / `backup:import` CLI commands and the
- * admin UI drive, so it answers "does restore/import work in all
- * directions?" (mysql → postgres, postgres → mysql, …) end to end, not
- * just at the SQL-dump layer.
+ * O e2e mais completo: para todo par ordenado (origem → destino) de
+ * motores, o `ExportJob` empacota a origem num `.flarum` de verdade e o
+ * `ImportJob` o restaura no destino. É o caminho da CLI
+ * (`backup:export`/`backup:import`) e do painel, não só a camada do dump.
  *
- * Pairs whose source or target engine is unreachable are skipped, so
- * locally this runs the available engines (e.g. 9 of 16) and CI runs all
- * 16 with the four service containers up.
+ * Pares com motor fora do ar são pulados; a CI, com os quatro serviços,
+ * roda os 16.
  */
 final class FullPipelineTransferTest extends TestCase
 {
@@ -40,8 +46,7 @@ final class FullPipelineTransferTest extends TestCase
 
     protected function setUp(): void
     {
-        // Models (the Backup row ExportJob writes on finalize) must
-        // resolve through the test connections.
+        // O Backup que o ExportJob grava no finalize resolve nas conexões de teste.
         Engines::bootEloquent();
 
         $this->workdir = sys_get_temp_dir().DIRECTORY_SEPARATOR.'bkp_full_'.bin2hex(random_bytes(4));
@@ -64,9 +69,7 @@ final class FullPipelineTransferTest extends TestCase
         $this->rrmdir($this->workdir);
     }
 
-    /**
-     * @dataProvider directionProvider
-     */
+    #[DataProvider('directionProvider')]
     public function test_full_pipeline_transfer(string $sourceDialect, string $targetDialect): void
     {
         $source = Engines::connection($sourceDialect);
@@ -76,27 +79,24 @@ final class FullPipelineTransferTest extends TestCase
             $this->markTestSkipped("Engines not both available: $sourceDialect → $targetDialect");
         }
 
-        // Source holds the fixture we want to move plus the Backup
-        // registry table (export finalize writes a row to it). Fixture
-        // wipes the whole schema first, so the backups table is created
-        // AFTER it.
+        // A origem tem a fixture e a tabela `backups` (o finalize do export grava
+        // nela). A fixture apaga o schema inteiro, então `backups` vem DEPOIS.
         Fixture::build($source);
         Fixture::seed($source);
         $this->buildBackupsTable($source);
         $expected = Fixture::snapshot($source);
 
-        // 1) Export the source into a real .flarum archive, targeting the
-        //    destination engine. ExportJob's finalize hits the Backup
-        //    model, so point Eloquent's default at the source first.
+        // 1) Export da origem num .flarum de verdade, já para o motor de destino.
+        //    O finalize usa o model Backup, então o Eloquent aponta para a origem.
         Engines::setDefaultConnection($sourceDialect);
         $archive = $this->runExport($source, $targetDialect);
         $this->assertFileExists($archive, "Export ($sourceDialect → $targetDialect) produced no archive");
 
-        // 2) Import that archive into the destination via the real
-        //    ImportJob (inspect → extract → restore → rewrite → finalize).
+        // 2) Import pelo ImportJob real (inspect → extract → restore → rewrite →
+        //    finalize).
         $this->runImport($target, $archive);
 
-        // 3) The destination must now hold exactly the source's data.
+        // 3) O destino agora tem exatamente os dados da origem.
         $actual = Fixture::snapshot($target);
         $this->assertSame($expected['authors'], $actual['authors'], "Authors mismatch $sourceDialect → $targetDialect");
         $this->assertSame($expected['posts'], $actual['posts'], "Posts mismatch $sourceDialect → $targetDialect");
@@ -120,7 +120,8 @@ final class FullPipelineTransferTest extends TestCase
             $source,
             $this->cipher(),
             $this->config,
-            $this->inventory()
+            $this->inventory(),
+            new Messages()
         );
 
         $jobId = bin2hex(random_bytes(8));
@@ -153,7 +154,7 @@ final class FullPipelineTransferTest extends TestCase
         $this->assertSame('done', $state->get('phase'), 'Import failed: '.$state->get('message'));
     }
 
-    /** Loop a job's runTick until it reaches a terminal phase. */
+    /** Roda runTick até o job chegar a uma fase terminal. */
     private function drive(callable $tick, JobState $state): JobState
     {
         $guard = 0;
@@ -203,8 +204,9 @@ final class FullPipelineTransferTest extends TestCase
             $target,
             $this->cipher(),
             $this->config,
-            new \Ramon\Backup\Project\ProjectReconciler($this->paths),
-            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+            new \Ramon\Backup\Project\ProjectReconciler($this->paths, new Messages()),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings),
+            new Messages()
         );
     }
 
