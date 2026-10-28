@@ -275,6 +275,13 @@ class MysqlEmitter extends AbstractEmitter
             $value = (string) $value;
         }
 
+        // A coluna temporal sai sem fração e o MySQL arredondaria: 12.83
+        // viraria 13 (o MariaDB corta). Corta aqui para os dois guardarem o
+        // mesmo segundo da origem.
+        if (in_array($col->type, [ColumnType::DATETIME, ColumnType::TIMESTAMP, ColumnType::TIME], true)) {
+            $value = (string) preg_replace('/(\d{2}:\d{2}:\d{2})\.\d+/', '$1', $value);
+        }
+
         // NUL ou bytes fora de UTF-8 vão como 0xHEX, mesmo em coluna de texto.
         if (str_contains($value, "\0") || preg_match('//u', $value) !== 1) {
             return '0x' . bin2hex($value);
