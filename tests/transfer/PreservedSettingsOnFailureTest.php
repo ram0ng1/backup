@@ -89,6 +89,8 @@ final class PreservedSettingsOnFailureTest extends TestCase
 
         $this->assertSame('error', $state->get('phase'));
         $this->assertSame('smtp.destino.example', $db->table('settings')->where('key', 'mail_host')->value('value'));
-        $this->assertSame('Origem', $db->table('settings')->where('key', 'forum_title')->value('value'));
+        // A tabela settings só é trocada no fim do restore; uma falha antes
+        // disso deixa a deste servidor como estava.
+        $this->assertSame('Destino', $db->table('settings')->where('key', 'forum_title')->value('value'));
     }
 }

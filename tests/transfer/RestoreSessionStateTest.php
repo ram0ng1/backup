@@ -149,7 +149,7 @@ final class RestoreSessionStateTest extends TestCase
         file_put_contents($dir.'/dump.sql', $sql);
         $state = JobState::create($dir.'/job.json', [
             'phase'    => 'restore',
-            'paths'    => ['dir' => $dir, 'dump' => $dir.'/dump.sql'],
+            'paths'    => ['dir' => $dir, 'dump' => $dir.'/dump.sql', 'archive' => $dir.'/upload.flarum'],
             'progress' => ['restored_statements' => 0],
             'cursor'   => ['restore_offset' => 0],
         ]);
@@ -174,6 +174,7 @@ final class RestoreSessionStateTest extends TestCase
         } while ($state->get('phase') === 'restore' && ++$ticks < 20);
 
         $this->assertGreaterThan(0, $ticks, 'o dump precisava de mais de um tick');
-        $this->assertSame('rewrite', $state->get('phase'), (string) $state->get('message'));
+        // O último tick do restore já conclui o job (ver ImportJob::runRestore).
+        $this->assertSame('done', $state->get('phase'), (string) $state->get('message'));
     }
 }

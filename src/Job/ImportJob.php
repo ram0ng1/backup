@@ -149,6 +149,7 @@ class ImportJob
                 // Entrada deixada pela metade e tamanho confirmado do dump.sql.
                 'current_entry'     => null,
                 'dump_bytes'        => 0,
+                'deferred_bytes'    => 0,
                 'extract_done'      => false,
                 // Posição do leitor (offset + estado do secretstream) para
                 // retomar sem decifrar de novo; null até o primeiro tick.
@@ -189,6 +190,7 @@ class ImportJob
             // Job com erro não continua: o dump em claro e o estado de
             // criptografia não servem para mais nada e não ficam no disco.
             @unlink((string) ($state->get('paths')['dump'] ?? ''));
+            @unlink($this->deferredDumpPath($state));
             $state->forgetBinary();
             $state->set('phase', 'error');
             $state->set('message', 'Error: '.$e->getMessage());
@@ -632,12 +634,25 @@ class ImportJob
             throw new RuntimeException('Could not read dump.sql.');
         }
 
+        // Comandos das tabelas de boot, guardados para o fim (ver
+        // DatabaseRestorer::BOOT_TABLES). O arquivo volta ao tamanho que o
+        // último tick salvo confirmou, como o dump.sql no extract.
+        $deferredPath = $this->deferredDumpPath($state);
+        $deferredFh = fopen($deferredPath, 'cb');
+        if ($deferredFh === false) {
+            fclose($fh);
+            throw new RuntimeException('Could not open the deferred statements file.');
+        }
+        ftruncate($deferredFh, (int) ($cursor['deferred_bytes'] ?? 0));
+        fseek($deferredFh, 0, SEEK_END);
+
         try {
             if (fseek($fh, $offset) !== 0) {
                 throw new RuntimeException('Could not seek dump.sql.');
             }
 
             $restorer = new DatabaseRestorer($this->db);
+            $restorer->deferBootTables($deferredFh, $this->db->getTablePrefix());
             $consumed = 0;
             while ($offset < $size) {
                 $chunk = fread($fh, Format::CHUNK_SIZE);
@@ -673,8 +688,12 @@ class ImportJob
             }
 
             $progress['restored_statements'] = $restorer->statementsRun() + (int) $progress['restored_statements'];
+
+            fflush($deferredFh);
+            $cursor['deferred_bytes'] = (int) ftell($deferredFh);
         } finally {
             fclose($fh);
+            fclose($deferredFh);
         }
 
         $cursor['restore_offset'] = $offset;
@@ -686,6 +705,10 @@ class ImportJob
         );
 
         if ($offset >= $size) {
+            $progress['restored_statements'] += $this->runDeferred($deferredPath);
+            $state->set('progress', $progress);
+            @unlink($deferredPath);
+
             DatabaseRestorer::enableForeignKeys($this->db);
 
             // O dump já traz `setval(...)`, mas arquivos antigos não. Repetir
@@ -693,9 +716,60 @@ class ImportJob
             $this->resyncPostgresSequences($state);
 
             $state->set('phase', 'rewrite');
+            $state->save();
+
+            /*
+             * As tabelas de autenticação acabaram de virar as da origem: a
+             * sessão de quem disparou o restore não existe mais, e um próximo
+             * tick pela web voltaria 401. As etapas que faltam rodam aqui,
+             * ainda nesta requisição.
+             */
+            $this->runRewrite($state);
+            $this->runVerify($state);
+            $this->runFinalize($state);
+
+            return;
         }
 
         $state->save();
+    }
+
+    private function deferredDumpPath(JobState $state): string
+    {
+        $paths = (array) $state->get('paths');
+
+        return rtrim((string) ($paths['dir'] ?? ''), '/\\').DIRECTORY_SEPARATOR.'dump.deferred.sql';
+    }
+
+    /**
+     * Executa de uma vez os comandos guardados das tabelas de boot. São
+     * tabelas pequenas na maioria dos fóruns; o limite de tempo sai para
+     * um fórum com muitos usuários não morrer no meio.
+     */
+    private function runDeferred(string $path): int
+    {
+        if (! is_file($path) || filesize($path) === 0) {
+            return 0;
+        }
+
+        @set_time_limit(0);
+        $fh = fopen($path, 'rb');
+        if ($fh === false) {
+            throw new RuntimeException('Could not read the deferred statements file.');
+        }
+
+        try {
+            $restorer = new DatabaseRestorer($this->db);
+            while (($chunk = fread($fh, Format::CHUNK_SIZE)) !== false && $chunk !== '') {
+                $restorer->feed($chunk);
+                $restorer->executeReady();
+            }
+            $restorer->finish();
+
+            return $restorer->statementsRun();
+        } finally {
+            fclose($fh);
+        }
     }
 
     /**
@@ -1035,6 +1109,7 @@ class ImportJob
     {
         $paths = $state->get('paths');
         @unlink($paths['dump']);
+        @unlink($this->deferredDumpPath($state));
         @unlink($paths['archive']);
         @unlink($this->preservedSettingsFile($state));
         $this->paths->deleteDir($this->projectStagingPath($state));

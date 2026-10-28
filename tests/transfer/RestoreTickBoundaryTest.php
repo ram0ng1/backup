@@ -68,6 +68,7 @@ final class RestoreTickBoundaryTest extends TestCase
          */
         $db = Mockery::mock(Connection::class);
         $db->shouldReceive('getDriverName')->andReturn('sqlite');
+        $db->shouldReceive('getTablePrefix')->andReturn('');
         $db->shouldReceive('unprepared')->andReturnUsing(function (string $sql): bool {
             $this->executed[] = $sql;
             return true;
@@ -124,7 +125,7 @@ final class RestoreTickBoundaryTest extends TestCase
         }
         $statements[] = $big;
 
-        $statements[] = "INSERT INTO users VALUES (1,'depois da fronteira')";
+        $statements[] = "INSERT INTO tags VALUES (1,'depois da fronteira')";
         $statements[] = 'SET FOREIGN_KEY_CHECKS = 1';
 
         return $statements;
