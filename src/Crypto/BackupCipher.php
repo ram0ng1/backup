@@ -16,34 +16,22 @@ use Flarum\Settings\SettingsRepositoryInterface;
 use RuntimeException;
 
 /**
- * Asymmetric encryption for backups.
+ * Criptografia híbrida dos backups. A chave pública fica nos settings; a
+ * privada só no config.php (`backup-private-key`), colada à mão, para o
+ * processo web não ter como vazar uma chave que nunca recebeu.
  *
- * Same trust model as the verified extension: the admin generates a
- * keypair, the public half lives in the settings table (cheap to load,
- * non-secret), and the private half MUST be pasted into config.php under
- * `backup-private-key` BY HAND. The web process can't be coerced into
- * leaking a key it has never been told.
- *
- * Hybrid encryption:
- *   - For each backup we generate a fresh 32-byte symmetric key K.
- *   - The body is encrypted with libsodium secretstream
- *     (XChaCha20-Poly1305) keyed by K — chunked, authenticated, and
- *     resumable across HTTP ticks because the secretstream state is a
- *     plain binary blob we can persist between requests.
- *   - K itself is sealed with the admin's public key
- *     (`sodium_crypto_box_seal`), producing a fixed-size 80-byte header
- *     that only the matching private key can unwrap.
- *
- * On import into a foreign Flarum install, the operator pastes the
- * private key into the import modal — we never touch the import target's
- * config.php during a restore.
+ * Cada backup usa uma chave simétrica nova K: o corpo vai em secretstream
+ * (XChaCha20-Poly1305), cujo estado é serializável entre ticks, e K vai
+ * selada com a chave pública (`sodium_crypto_box_seal`, 80 bytes). No
+ * import em outro fórum, a chave privada é colada no modal; o config.php
+ * do destino não é tocado.
  */
 class BackupCipher
 {
     public const SETTING_PUBLIC_KEY = 'ramon-backup.encryption_public_key';
     public const CONFIG_PRIVATE_KEY = 'backup-private-key';
 
-    /** sealed_box(public, K) where K is 32 bytes → 32 + 48 = 80. */
+    /** sealed_box(public, K) com K de 32 bytes: 32 + 48 = 80. */
     public const WRAPPED_KEY_BYTES = 80;
 
     public function __construct(
@@ -69,10 +57,8 @@ class BackupCipher
     }
 
     /**
-     * Both keys present AND the public key derived from the private key
-     * matches the stored public key. A mismatch means the admin pasted a
-     * private key from a different keypair into config.php — encryption
-     * looks healthy but every decrypt would fail.
+     * Confere se a pública derivada da privada bate com a salva. Privada de
+     * outro par no config.php parece funcionar, mas nenhum decrypt passaria.
      */
     public function keysMatch(): ?bool
     {
@@ -100,20 +86,12 @@ class BackupCipher
         return $this->isAvailable() && $this->keysMatch() === true;
     }
 
-    /**
-     * Generate a fresh 32-byte symmetric key. The caller must seal it
-     * with the public key (or a foreign one passed at import time) and
-     * embed the wrapped result in the archive header.
-     */
     public function generateSymmetricKey(): string
     {
         return random_bytes(SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_KEYBYTES);
     }
 
-    /**
-     * Wrap a symmetric key with the configured public key, returning the
-     * 80-byte sealed_box ciphertext.
-     */
+    /** Embrulha com a chave pública configurada (sealed_box, 80 bytes). */
     public function wrapSymmetricKey(string $symmetricKey): string
     {
         $public = $this->loadPublicKey();
@@ -124,10 +102,8 @@ class BackupCipher
     }
 
     /**
-     * Wrap a symmetric key with an arbitrary base64 public key. Used at
-     * export time when the admin chooses to encrypt to a key OTHER than
-     * the one stored in this install — for instance, when preparing an
-     * archive for transfer to a different Flarum.
+     * Embrulha com outra chave pública, para preparar um arquivo que vai ser
+     * restaurado em outro fórum.
      */
     public function wrapSymmetricKeyWith(string $symmetricKey, string $base64PublicKey): string
     {
@@ -139,10 +115,8 @@ class BackupCipher
     }
 
     /**
-     * Unwrap a sealed symmetric key using either the configured private
-     * key (default) or one provided by the caller as base64. The latter
-     * is what the import flow uses when the keypair travels with the
-     * file rather than living in config.php.
+     * Usa a chave privada do config.php, ou a passada em base64 (caso do
+     * import, quando a chave vem junto com o arquivo).
      */
     public function unwrapSymmetricKey(string $wrapped, ?string $base64PrivateKey = null): string
     {
@@ -177,10 +151,8 @@ class BackupCipher
     }
 
     /**
-     * Generate a fresh keypair, store the public half in settings, and
-     * return both as base64. The private half is shown ONCE to the admin
-     * so they can paste it into config.php; subsequent calls do not
-     * re-emit it.
+     * Gera um par novo e salva a pública. A privada só é devolvida aqui, uma
+     * vez, para o admin colar no config.php.
      *
      * @return array{public: string, private: string}
      */

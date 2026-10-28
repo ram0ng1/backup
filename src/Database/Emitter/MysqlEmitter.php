@@ -17,10 +17,8 @@ use Ramon\Backup\Database\Schema\ColumnType;
 use Ramon\Backup\Database\Schema\Table;
 
 /**
- * Emitter for MySQL (5.7+, 8.0+) and MariaDB (10.3+). The two share
- * almost all syntax — the differences (JSON storage, sequence support,
- * IGNORE INDEX hints) don't matter for our schema/data shape, so a
- * single emitter handles both.
+ * Emitter para MySQL (5.7+, 8.0+) e MariaDB (10.3+). As diferenças entre
+ * os dois não afetam o schema e os dados que geramos.
  */
 class MysqlEmitter extends AbstractEmitter
 {
@@ -35,15 +33,10 @@ class MysqlEmitter extends AbstractEmitter
     }
 
     /**
-     * MySQL/MariaDB treat backslash as an escape character inside string
-     * literals unless NO_BACKSLASH_ESCAPES is set — which our dump
-     * deliberately does not enable, so the .sql stays loadable by any
-     * client at its default mode. That means a literal backslash must be
-     * doubled in addition to the standard single-quote doubling;
-     * otherwise a value like `C:\path` or `a\b` silently drops the
-     * backslash (and `\'`, `\n` etc. would be mis-decoded) on restore.
-     * PostgreSQL and SQLite take the literal as-is, which is why only
-     * this emitter overrides the base behaviour.
+     * Sem NO_BACKSLASH_ESCAPES (de propósito, para o .sql carregar em qualquer
+     * cliente no modo padrão), a barra invertida é escape no MySQL/MariaDB e
+     * precisa ser dobrada; senão `C:\path` perde a barra no restore.
+     * PostgreSQL e SQLite aceitam o literal como está.
      */
     protected function quoteLiteral(string $value): string
     {
@@ -112,14 +105,11 @@ class MysqlEmitter extends AbstractEmitter
         }
 
         $body = implode(",\n", $lines);
-        // Single-line collapse so the dump's per-statement delimiter
-        // (a comment) is the only newline boundary the restorer sees.
+        // Uma linha só: o delimitador (um comentário) é a única quebra que o restorer vê.
         $create = "CREATE TABLE $name (\n$body\n) DEFAULT CHARSET=utf8mb4";
         $create = preg_replace('/\s+/', ' ', $create);
 
-        // DROP is emitted up front for every table by the dumper (see
-        // SqlEmitter::emitDropTable), so a re-import over an
-        // incompatible prior schema can't fail the FK type check.
+        // O DROP de todas as tabelas sai antes, no dumper (ver SqlEmitter::emitDropTable).
         return $create . $this->delimiter();
     }
 
@@ -156,30 +146,22 @@ class MysqlEmitter extends AbstractEmitter
         if ($col->unsigned && $col->type->isInteger()) {
             $sql .= ' UNSIGNED';
         }
-        // An AUTO_INCREMENT column is implicitly NOT NULL and MySQL
-        // rejects a nullable PRIMARY KEY — force NOT NULL even if the
-        // source model reports the column nullable (e.g. a value dumped
-        // through SQLite, whose INTEGER PRIMARY KEY reads as notnull=0).
+        // AUTO_INCREMENT já é NOT NULL e o MySQL recusa PK anulável; força NOT NULL
+        // mesmo se o modelo disser o contrário (ex.: PK INTEGER vinda do SQLite).
         $sql .= ($col->nullable && ! $col->autoIncrement) ? ' NULL' : ' NOT NULL';
 
         if ($col->autoIncrement) {
             $sql .= ' AUTO_INCREMENT';
         } elseif ($col->default !== null || $col->defaultIsExpression) {
-            // MySQL/MariaDB refuse DEFAULT on TEXT/BLOB/JSON/GEOMETRY
-            // ("BLOB, TEXT, GEOMETRY or JSON column 'x' can't have a
-            // default value"). MariaDB 10.2.1+ permits an expression
-            // default, but plain literal defaults are still rejected
-            // and the constraint is moot for a backup target. Drop
-            // the default silently — the destination column is still
-            // nullable / non-null per the source, just without a
-            // server-side filler.
+            // MySQL/MariaDB recusam DEFAULT literal em TEXT/BLOB/JSON/GEOMETRY. O
+            // default é descartado; a nulabilidade da coluna continua a da origem.
             if ($this->columnDefaultDisallowed($col->type)) {
-                // intentional no-op
+                // sem DEFAULT, ver acima
             } else {
                 $sql .= ' DEFAULT ' . $this->renderDefault($col);
             }
         } elseif ($col->nullable) {
-            // No-op; NULL default implicit
+            // NULL já é o default implícito
         }
 
         if ($col->onUpdate) {
@@ -226,10 +208,8 @@ class MysqlEmitter extends AbstractEmitter
     }
 
     /**
-     * MySQL family rejects literal DEFAULT values on the LOB-style
-     * types — TEXT (all sizes), BLOB (all sizes), JSON, and the
-     * spatial types. Centralised here so column DDL and any future
-     * ALTER TABLE path stay consistent.
+     * Tipos que a família MySQL não aceita com DEFAULT literal: TEXT e BLOB
+     * (todos os tamanhos), JSON e espaciais.
      */
     private function columnDefaultDisallowed(ColumnType $t): bool
     {
@@ -259,10 +239,8 @@ class MysqlEmitter extends AbstractEmitter
     }
 
     /**
-     * Type-aware quoting for one value. Booleans go to 1/0, integers
-     * stay bare, JSON travels as a quoted string (MySQL parses it on
-     * insert), binary uses 0xHEX so we never wrestle with charset
-     * round-trips.
+     * Booleano vira 1/0, inteiro vai sem aspas, JSON como string e binário
+     * como 0xHEX, para não depender de conversão de charset.
      */
     private function quoteValue(Column $col, mixed $value): string
     {
@@ -286,7 +264,7 @@ class MysqlEmitter extends AbstractEmitter
 
         if ($col->type->isBinary()) {
             $bytes = is_string($value) ? $value : (string) $value;
-            // Resources from PG `bytea` arrive as streams.
+            // `bytea` do PG chega como stream.
             if (is_resource($value)) {
                 $bytes = stream_get_contents($value) ?: '';
             }
@@ -297,8 +275,7 @@ class MysqlEmitter extends AbstractEmitter
             $value = (string) $value;
         }
 
-        // String containing NUL or non-UTF-8 bytes: travel as 0xHEX so
-        // it survives any charset, even though the column is textual.
+        // NUL ou bytes fora de UTF-8 vão como 0xHEX, mesmo em coluna de texto.
         if (str_contains($value, "\0") || preg_match('//u', $value) !== 1) {
             return '0x' . bin2hex($value);
         }

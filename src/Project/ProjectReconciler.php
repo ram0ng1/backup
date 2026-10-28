@@ -15,24 +15,18 @@ use Flarum\Foundation\Paths;
 use Throwable;
 
 /**
- * Aplica os arquivos da raiz do projeto (`project/*` no arquivo) sobre a
- * instalação de destino — e é o único ponto do import autorizado a
- * escrever fora de assets/, storage/ e dos diretórios de extensão.
+ * Aplica os arquivos da raiz do projeto (`project/*` no arquivo) no
+ * destino; é o único ponto do import que escreve fora de assets/, storage/
+ * e dos diretórios de extensão.
  *
- * O import extrai `project/*` para um diretório de staging dentro do job
- * em vez de gravar direto no destino. Isso existe porque sobrescrever o
- * `composer.json` do destino com o da origem é destrutivo: o manifesto
- * descreve o SERVIDOR, não o fórum. Um destino que instalou fof/redis
- * depois do backup perde o require, e o `composer install` seguinte poda
- * o pacote do vendor/ — deixando o `extend.php` da raiz apontando para
- * uma classe que não existe mais e derrubando o boot antes do handler de
- * erro existir.
- *
- * Regras:
- *   - destino SEM composer.json  → recuperação em servidor limpo; grava
- *     composer.json e composer.lock verbatim.
- *   - destino COM composer.json  → merge aditivo dos requires (o destino
- *     vence em conflito de constraint) e o composer.lock NUNCA é gravado.
+ * O `composer.json` descreve o SERVIDOR, não o fórum: sobrescrevê-lo
+ * apagaria requires que o destino instalou depois do backup, e o
+ * `composer install` seguinte deixaria o `extend.php` da raiz apontando
+ * para classes que não existem mais. Por isso:
+ *   - destino SEM composer.json: servidor limpo; composer.json e
+ *     composer.lock vão como estão.
+ *   - destino COM composer.json: merge aditivo dos requires (o destino
+ *     vence em conflito) e o composer.lock NUNCA é gravado.
  */
 class ProjectReconciler
 {
@@ -72,10 +66,8 @@ class ProjectReconciler
     }
 
     /**
-     * Une o manifesto do arquivo ao do destino. Sempre calcula o diff dos
-     * requires — mesmo quando não vai gravar — porque saber quais pacotes
-     * as extensões restauradas exigem é o que evita descobrir a falta só
-     * quando o fórum não sobe.
+     * Calcula o diff dos requires mesmo quando não grava: é o que avisa quais
+     * pacotes as extensões restauradas exigem antes de o fórum não subir.
      *
      * @return array{warnings: list<string>, applied: list<string>}
      */
@@ -244,19 +236,12 @@ class ProjectReconciler
     }
 
     /**
-     * Varre o extend.php da raiz procurando classes referenciadas que o
-     * autoloader não resolve.
+     * Classes citadas no extend.php da raiz que o autoloader não resolve.
      *
-     * Existe por causa do modo de falha que motivou esta camada: o core
-     * dá `require` nesse arquivo dentro de `Site::fromPaths()`, antes de
-     * qualquer handler de erro — uma classe ausente vira fatal com exit
-     * 255, saída vazia e log do Flarum vazio. Detectar aqui troca o 500
-     * mudo por um aviso nomeando a classe.
-     *
-     * Análise estática: o arquivo NUNCA é executado (dar `require` nele
-     * teria efeito colateral). A checagem usa o autoloader vivo, então
-     * enxerga o vendor/ como está no disco agora — não o que sobrará
-     * depois de um `composer install`.
+     * O core dá `require` nesse arquivo em `Site::fromPaths()`, antes de
+     * qualquer handler de erro: classe ausente vira fatal com saída e log
+     * vazios. Aqui o 500 mudo vira um aviso com o nome da classe. Análise
+     * estática (o arquivo nunca é executado) contra o vendor/ atual.
      *
      * @return list<string> FQCNs não resolvidos.
      */
@@ -579,17 +564,14 @@ class ProjectReconciler
     }
 
     /**
-     * Lê um arquivo local do próprio install: o manifesto da raiz, o
-     * extend.php da raiz, ou o staging deste job.
-     *
-     * O caminho deriva SEMPRE de {@see Paths} ou do diretório do job —
-     * nunca de input de requisição —, então o alerta de SSRF do semgrep
-     * é falso positivo. Concentrar a leitura aqui deixa a supressão num
-     * ponto só, em vez de espalhada por cada chamada.
+     * Lê arquivos do próprio install (manifesto, extend.php da raiz ou
+     * staging do job). O caminho vem sempre de {@see Paths} ou do diretório
+     * do job, nunca da requisição; centralizar aqui deixa a supressão do
+     * semgrep num ponto só.
      */
     private function readLocalFile(string $path): ?string
     {
-        $raw = @file_get_contents($path); /* caminho derivado de Paths, nunca de request; nosemgrep: flarum-v2-server-side-fetch */
+        $raw = @file_get_contents($path); /* caminho de Paths, nunca de request; nosemgrep: flarum-v2-server-side-fetch */
         return $raw === false ? null : $raw;
     }
 }

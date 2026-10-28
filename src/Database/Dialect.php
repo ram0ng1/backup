@@ -15,12 +15,10 @@ use Illuminate\Database\Connection;
 use RuntimeException;
 
 /**
- * The set of database engines this extension can read from AND write
- * to. The four are kept distinct (rather than collapsing MariaDB into
- * MySQL) so we can target version-specific syntax — e.g. MariaDB
- * tolerates `JSON` as a synonym for LONGTEXT but predates MySQL's
- * native JSON checks; SQLite cannot ALTER TABLE to add FK; PostgreSQL
- * needs explicit sequence resets after a bulk load.
+ * Engines que a extensão lê e escreve. MariaDB fica separado do MySQL
+ * porque a sintaxe difere em pontos que importam (JSON, por exemplo); o
+ * SQLite não adiciona FK por ALTER TABLE e o PostgreSQL precisa
+ * reajustar sequências depois da carga.
  */
 enum Dialect: string
 {
@@ -29,7 +27,7 @@ enum Dialect: string
     case POSTGRES = 'postgres';
     case SQLITE   = 'sqlite';
 
-    /** Detect the dialect of a live Connection (used to pick the introspector). */
+    /** Dialeto de uma conexão viva (escolhe o introspector). */
     public static function detect(Connection $db): self
     {
         $driver = $db->getDriverName();
@@ -42,11 +40,7 @@ enum Dialect: string
         };
     }
 
-    /**
-     * Parse a user-facing identifier (case-insensitive, with friendly
-     * aliases) into the enum. Used by the export controller when the
-     * admin picks a target.
-     */
+    /** Aceita o identificador do admin sem diferenciar maiúsculas e com apelidos. */
     public static function parse(string $value): self
     {
         $key = strtolower(trim($value));
@@ -59,13 +53,12 @@ enum Dialect: string
         };
     }
 
-    /** True when this dialect uses backticks for identifiers (MySQL/MariaDB). */
     public function usesBackticks(): bool
     {
         return $this === self::MYSQL || $this === self::MARIADB;
     }
 
-    /** True for the MySQL family — many quirks (FK toggle, charset, JSON) align. */
+    /** Família MySQL: toggle de FK, charset e JSON se comportam igual. */
     public function isMysqlFamily(): bool
     {
         return $this === self::MYSQL || $this === self::MARIADB;

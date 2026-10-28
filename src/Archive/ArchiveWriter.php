@@ -15,25 +15,13 @@ use Ramon\Backup\Crypto\BackupCipher;
 use RuntimeException;
 
 /**
- * Streaming writer for `.flarum` archives.
+ * Escritor em streaming de arquivos `.flarum`, feito para exports que
+ * atravessam vários ticks.
  *
- * Designed for resumable, multi-tick exports:
- *   - The output file handle is opened append-mode on resume, so each
- *     tick continues writing where the previous one stopped.
- *   - Entries can be split across ticks via the `beginEntry` /
- *     `appendEntryBytes` API: write the entry header once, then push
- *     payload bytes in as many calls as needed.
- *   - Encryption state (libsodium secretstream + a small plaintext
- *     buffer) is exposed via `serializeEncryptionState()` so the caller
- *     can persist it between ticks and rebuild the writer on the next
- *     tick via `resumeEncrypted()`.
- *
- * Public surface intentionally small:
- *   - createPlain() / createEncrypted()   — first tick: write header
- *   - resumePlain() / resumeEncrypted()   — subsequent ticks: append
- *   - beginEntry($name, $type, $length)   — write entry header
- *   - appendEntryBytes($bytes)            — push payload bytes
- *   - finalize()                          — emit terminator + close stream
+ * Na retomada o arquivo é reaberto em modo append, e uma entrada pode ser
+ * escrita aos pedaços (`beginEntry` + `appendEntryBytes`). O estado do
+ * secretstream sai por `serializeEncryptionState()` para o chamador
+ * persistir e reconstruir o escritor com `resumeEncrypted()`.
  */
 class ArchiveWriter
 {
@@ -42,10 +30,10 @@ class ArchiveWriter
 
     private bool $encrypted;
 
-    /** Pending plaintext that hasn't been pushed through secretstream yet. */
+    /** Texto claro que ainda não passou pelo secretstream. */
     private string $buffer = '';
 
-    /** libsodium secretstream state (mutated in-place by sodium_*_push). */
+    /** Estado do secretstream, alterado no lugar por sodium_*_push. */
     private ?string $streamState = null;
 
     private bool $finalized = false;
@@ -57,11 +45,7 @@ class ArchiveWriter
         $this->encrypted = $encrypted;
     }
 
-    /**
-     * Start a new plaintext archive — writes the magic + flags + meta
-     * header and leaves the handle positioned at the start of the entry
-     * stream.
-     */
+    /** Grava magic, flags e meta; o handle fica no início das entradas. */
     public static function createPlain(string $path, array $meta): self
     {
         $fh = self::openForCreate($path);
@@ -70,9 +54,8 @@ class ArchiveWriter
     }
 
     /**
-     * Start a new encrypted archive — writes magic + flags + meta + the
-     * 80-byte wrapped key + the secretstream init header. Returns the
-     * writer with the secretstream state primed for `appendEntryBytes`.
+     * Grava o cabeçalho, a chave embrulhada (80 bytes) e o header do
+     * secretstream, deixando o estado pronto para `appendEntryBytes`.
      */
     public static function createEncrypted(string $path, array $meta, string $wrappedKey, string $symmetricKey): self
     {
@@ -97,14 +80,14 @@ class ArchiveWriter
         return $w;
     }
 
-    /** Re-open an in-progress plaintext archive for append. */
+    /** Reabre um arquivo sem cifra em andamento para append. */
     public static function resumePlain(string $path): self
     {
         $fh = self::openForAppend($path);
         return new self($fh, encrypted: false);
     }
 
-    /** Re-open an in-progress encrypted archive, restoring stream state. */
+    /** Reabre um arquivo cifrado em andamento, restaurando o estado do stream. */
     public static function resumeEncrypted(string $path, string $streamState, string $buffer): self
     {
         $fh = self::openForAppend($path);
@@ -115,10 +98,8 @@ class ArchiveWriter
     }
 
     /**
-     * Write the header for a new entry: name + type + declared length.
-     * The caller MUST follow up with exactly `$length` bytes of
-     * `appendEntryBytes`. There's no central directory to fix up — the
-     * declared length is what readers trust.
+     * O chamador TEM de mandar exatamente `$length` bytes depois. Não há
+     * diretório central para corrigir: o leitor confia no tamanho declarado.
      */
     public function beginEntry(string $name, int $type, int $length): void
     {
@@ -133,7 +114,6 @@ class ArchiveWriter
         $this->emit($header);
     }
 
-    /** Push payload bytes for the current entry. */
     public function appendEntryBytes(string $bytes): void
     {
         if ($this->finalized) {
@@ -145,9 +125,7 @@ class ArchiveWriter
     }
 
     /**
-     * Convenience: stream a resource into a single entry from start to
-     * finish. Use this only when the caller is sure the work fits in
-     * one tick.
+     * Entrada inteira de uma vez. Só para quando cabe com folga num tick.
      *
      * @param resource $source
      */
@@ -167,9 +145,8 @@ class ArchiveWriter
     }
 
     /**
-     * Write the zero-length-name terminator. For encrypted archives this
-     * also pushes any pending buffer with the FINAL tag so the reader
-     * gets a clean end-of-stream signal.
+     * Grava o terminador. Em arquivo cifrado empurra o resto do buffer com a
+     * tag FINAL, para o leitor reconhecer o fim do stream.
      */
     public function finalize(): void
     {
@@ -200,8 +177,7 @@ class ArchiveWriter
     }
 
     /**
-     * Snapshot the encryption state so the caller can persist it between
-     * ticks. `null` for plaintext writers.
+     * `null` em arquivo sem cifra.
      *
      * @return array{state: string, buffer: string}|null
      */
@@ -215,9 +191,8 @@ class ArchiveWriter
     }
 
     /**
-     * Force the pending buffer through the secretstream as one chunk so
-     * no plaintext is carried across HTTP requests in the persisted job
-     * state. Costs ~17 bytes per tick boundary; cheap.
+     * Empurra o buffer pendente como um chunk, para nenhum texto claro ir
+     * parar no estado persistido do job. Custa ~17 bytes por tick.
      */
     public function flushEncryptedBuffer(): void
     {
@@ -227,11 +202,6 @@ class ArchiveWriter
         $this->writeFramedCipher($cipher);
     }
 
-    /**
-     * Emit bytes — either directly to disk (plaintext mode) or into the
-     * secretstream buffer (encrypted mode), pushing full chunks as the
-     * buffer crosses CHUNK_SIZE.
-     */
     private function emit(string $bytes): void
     {
         if (! $this->encrypted) {

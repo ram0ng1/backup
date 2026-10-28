@@ -17,20 +17,15 @@ use Ramon\Backup\Database\Schema\ColumnType;
 use Ramon\Backup\Database\Schema\Table;
 
 /**
- * Emitter for SQLite 3.35+. The 3.35 floor is for `ALTER TABLE … DROP
- * COLUMN` support and well-defined RETURNING — the data path here only
- * needs the much older bits, but the extension's overall floor matches.
+ * Emitter para SQLite 3.35+ (piso geral da extensão; o caminho de dados
+ * daqui roda em versões bem mais antigas).
  *
- * Notes:
- *   - SQLite uses dynamic typing; we still emit declared types so other
- *     tools that read the dump understand intent.
- *   - AUTOINCREMENT is only valid on `INTEGER PRIMARY KEY`. When the
- *     source has an auto-incrementing column with a different shape
- *     (e.g. BIGINT), we emit it as `INTEGER PRIMARY KEY AUTOINCREMENT`
- *     — SQLite stores integers as 64-bit anyway, so the value range is
- *     preserved.
- *   - Foreign keys are deferred during the data load via
- *     `PRAGMA foreign_keys = OFF` in the preamble.
+ *   - Os tipos declarados são emitidos mesmo com tipagem dinâmica, para
+ *     outras ferramentas entenderem o dump.
+ *   - AUTOINCREMENT só vale em `INTEGER PRIMARY KEY`; um BIGINT
+ *     auto-increment vira essa forma sem perder faixa, já que o SQLite
+ *     guarda inteiros em 64 bits.
+ *   - FKs ficam suspensas na carga por `PRAGMA foreign_keys = OFF`.
  */
 class SqliteEmitter extends AbstractEmitter
 {
@@ -63,9 +58,8 @@ class SqliteEmitter extends AbstractEmitter
     {
         $name = $this->quoteIdent($table->name);
 
-        // Detect "single integer-PK auto-increment" — that case must
-        // collapse into the INTEGER PRIMARY KEY AUTOINCREMENT shape
-        // because SQLite refuses AUTOINCREMENT on any other column.
+        // PK inteira única com auto-increment tem de virar INTEGER PRIMARY KEY
+        // AUTOINCREMENT: o SQLite não aceita AUTOINCREMENT em outra forma.
         $autoCols = $table->autoIncrementColumns();
         $singleAutoPk = (count($autoCols) === 1
             && count($table->primaryKey) === 1
@@ -93,8 +87,7 @@ class SqliteEmitter extends AbstractEmitter
         $create = "CREATE TABLE $name (\n$body\n)";
         $create = preg_replace('/\s+/', ' ', $create);
 
-        // DROP is emitted up front for every table by the dumper, before
-        // any CREATE — see SqlEmitter::emitDropTable.
+        // O DROP sai antes, no dumper (ver SqlEmitter::emitDropTable).
         $sql = $create . $this->delimiter();
 
         foreach ($table->indexes as $idx) {
@@ -136,11 +129,9 @@ class SqliteEmitter extends AbstractEmitter
     private function columnDdl(Column $col, bool $isSingleAutoPk): string
     {
         if ($isSingleAutoPk) {
-            // Required exact form; ignore declared type/nullability.
-            // The explicit NOT NULL keeps the column reading back as
-            // not-null on re-introspection — without it SQLite reports
-            // `notnull = 0` for the rowid alias, which would later emit
-            // an invalid nullable PK when transferred to MySQL/Postgres.
+            // Forma exigida; ignora tipo e nulabilidade declarados. O NOT NULL
+            // explícito evita que a releitura reporte `notnull = 0` para o alias do
+            // rowid e gere PK anulável inválida no MySQL/PostgreSQL.
             return $this->quoteIdent($col->name) . ' INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT';
         }
 
@@ -228,7 +219,7 @@ class SqliteEmitter extends AbstractEmitter
 
         if ($col->type->isBinary()) {
             $bytes = is_resource($value) ? (stream_get_contents($value) ?: '') : (string) $value;
-            // SQLite blob literal: X'DEADBEEF'
+            // Literal blob: X'DEADBEEF'
             return "X'" . bin2hex($bytes) . "'";
         }
 

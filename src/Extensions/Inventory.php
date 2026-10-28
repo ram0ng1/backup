@@ -15,14 +15,9 @@ use Flarum\Extension\ExtensionManager;
 use Flarum\Foundation\Paths;
 
 /**
- * Single source of truth for the extensions installed on this Flarum:
- * everything from `workbench/` (local dev) AND everything from
- * `vendor/` (composer-managed). Wraps Flarum's ExtensionManager so we
- * don't reach into its internals from controllers / jobs.
- *
- * The export and import flows both lean on this — export to populate
- * the per-extension selection UI, import to know whether each restored
- * extension belongs in `workbench/` or `vendor/`.
+ * Extensões instaladas neste Flarum, de `workbench/` e de `vendor/`, via
+ * ExtensionManager. O export usa para a seleção por extensão; o import,
+ * para saber para onde volta cada extensão restaurada.
  */
 class Inventory
 {
@@ -33,8 +28,7 @@ class Inventory
     }
 
     /**
-     * Enumerate every installed extension. Sorted by id for stable
-     * UI rendering across requests.
+     * Ordenadas por id para a lista não mudar entre requisições.
      *
      * @return list<array{id: string, name: string, title: string, version: string, location: string, path: string, relative: string, enabled: bool}>
      */
@@ -50,8 +44,7 @@ class Inventory
 
             $items[] = [
                 'id'       => (string) $ext->getId(),
-                // `Extension::$name` is a magic-property accessor that
-                // returns the composer package name (e.g. "ramon/verified").
+                // `Extension::$name` é propriedade mágica: devolve o nome do pacote composer.
                 'name'     => (string) ($ext->name ?? ''),
                 'title'    => (string) ($ext->getTitle() ?: $ext->getId()),
                 'version'  => (string) ($ext->getVersion() ?? ''),
@@ -67,8 +60,7 @@ class Inventory
     }
 
     /**
-     * Look up one extension by id. Returns null when it is not
-     * installed on this server.
+     * Null quando a extensão não está instalada aqui.
      *
      * @return array{id: string, name: string, title: string, version: string, location: string, path: string, relative: string, enabled: bool}|null
      */
@@ -88,9 +80,8 @@ class Inventory
     }
 
     /**
-     * Convert an absolute extension path into a forward-slash path
-     * relative to the Flarum base. Always uses `/` so the manifest
-     * stays portable across operating systems.
+     * Caminho relativo à raiz do Flarum, sempre com `/`, para o manifesto
+     * valer em qualquer sistema operacional.
      */
     private function relativePosix(string $abs, string $base): string
     {

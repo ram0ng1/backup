@@ -15,31 +15,18 @@ use Illuminate\Database\Connection;
 use Throwable;
 
 /**
- * Plays SQL produced by `DatabaseDumper` back into a database.
+ * Executa o SQL do `DatabaseDumper`. O chamador alimenta bytes com
+ * `feed()` e `executeReady()` roda os statements completos; o que vem
+ * depois do último `STATEMENT_DELIMITER` fica no buffer.
  *
- * Resumable across ticks via a "buffer + cursor" model: the caller
- * pumps SQL bytes in via `feed()` and calls `executeReady()` to flush
- * whatever complete statements are already terminated. Anything past
- * the last `STATEMENT_DELIMITER` is held back in the buffer.
+ * A instância NÃO sobrevive ao tick: cada tick começa com buffer vazio.
+ * Logo, o cursor persistido pelo chamador nunca pode passar do último byte
+ * executado; ou o tick termina com {@see pendingBytes()} zerado, ou o
+ * cursor recua essa quantidade. Senão o tick seguinte reabre o dump no
+ * meio de um literal e o banco recebe o rabo de um INSERT.
  *
- * CONTRATO COM O CHAMADOR: a instância NÃO sobrevive ao tick — cada tick
- * constrói um restorer novo, de buffer vazio. Logo, o cursor que o
- * chamador persiste jamais pode passar do último byte executado. É para
- * isso que existe {@see pendingBytes()}: ou o tick só termina com ele
- * zerado (fronteira de statement), ou o cursor recua essa mesma
- * quantidade antes de ser salvo. Avançar o cursor por cima do buffer
- * descarta a cabeça de um statement e faz o tick seguinte reabrir o dump
- * no meio de um literal — o rabo do INSERT chega sozinho ao banco e volta
- * como erro de sintaxe.
- *
- * The restorer is engine-aware: it detects the destination's dialect
- * and uses the right "disable FK enforcement" toggle for the duration
- * of the load. Static helpers `disableForeignKeys()` /
- * `enableForeignKeys()` are exposed so the surrounding job code can
- * apply the toggle once per tick (each tick gets a fresh PDO session).
- *
- * Designed to be safe for repeated restores: every dumped table starts
- * with `DROP TABLE IF EXISTS`, so we never need to truncate up front.
+ * Como cada tick abre uma sessão PDO nova, `disableForeignKeys()` e
+ * `enableForeignKeys()` ficam expostos para o job aplicar a cada tick.
  */
 class DatabaseRestorer
 {
@@ -52,16 +39,13 @@ class DatabaseRestorer
     ) {
     }
 
-    /** Append more SQL bytes to the internal buffer. */
     public function feed(string $sqlChunk): void
     {
         $this->buffer .= $sqlChunk;
     }
 
     /**
-     * Execute every complete statement currently in the buffer. Returns
-     * how many were run. The remainder (everything past the last
-     * delimiter) stays in the buffer.
+     * Devolve quantos statements rodaram; o resto fica no buffer.
      */
     public function executeReady(): int
     {
@@ -90,9 +74,8 @@ class DatabaseRestorer
     }
 
     /**
-     * Drain whatever is left in the buffer (only meaningful at the end
-     * of the stream — the dumper always finishes with a delimiter, but
-     * dumps from older versions / external tools might not).
+     * Só no fim do stream. O dumper sempre termina com delimitador, mas dumps
+     * antigos ou de outras ferramentas podem não terminar.
      */
     public function finish(): int
     {
@@ -116,10 +99,8 @@ class DatabaseRestorer
     }
 
     /**
-     * Bytes ainda no buffer — a cauda depois do último delimitador, que
-     * `executeReady()` segurou por não estar terminada. Zero significa que
-     * o stream parou exatamente numa fronteira de statement, que é a única
-     * posição em que o chamador pode persistir seu cursor.
+     * Bytes da cauda depois do último delimitador. Zero quer dizer fronteira
+     * de statement, a única posição em que o chamador pode salvar o cursor.
      */
     public function pendingBytes(): int
     {
@@ -127,14 +108,11 @@ class DatabaseRestorer
     }
 
     /**
-     * Estado de sessão que o preâmbulo do dump ajusta, reaplicado no começo
-     * de cada tick: pela web cada tick abre uma conexão nova, e o preâmbulo
-     * só roda no primeiro. Sem `standard_conforming_strings = on` uma barra
-     * invertida no conteúdo de um post fecha o literal no PostgreSQL; sem
-     * `NO_AUTO_VALUE_ON_ZERO` um id 0 vira o próximo auto-increment.
-     *
-     * Não é best-effort como a troca de FK: se o ajuste falhar, o restore
-     * para em vez de seguir com literais lidos de outro jeito.
+     * Estado de sessão do preâmbulo, reaplicado a cada tick: pela web cada
+     * tick abre uma conexão nova e o preâmbulo só roda no primeiro. Sem
+     * `standard_conforming_strings = on` uma barra invertida num post fecha o
+     * literal no PostgreSQL; sem `NO_AUTO_VALUE_ON_ZERO` um id 0 vira o
+     * próximo auto-increment. Se falhar, o restore para.
      */
     public static function prepareSession(Connection $db): void
     {
@@ -149,20 +127,9 @@ class DatabaseRestorer
     }
 
     /**
-     * Best-effort "suspend FK enforcement for this connection". Engine
-     * matrix:
-     *   - MySQL/MariaDB: `SET FOREIGN_KEY_CHECKS = 0`
-     *   - SQLite:        `PRAGMA foreign_keys = OFF`
-     *   - PostgreSQL:    no-op — `session_replication_role = 'replica'`
-     *                    requires superuser, so we cannot rely on it
-     *                    on managed hosts (RDS/Neon/Supabase). Instead,
-     *                    PG dumps emit FK constraints as separate
-     *                    `ALTER TABLE ADD CONSTRAINT` statements AFTER
-     *                    all data is loaded, so there is nothing to
-     *                    suspend during the INSERT phase to begin with.
-     *
-     * Each tick gets a fresh PDO session, so callers must invoke this
-     * at the start of every tick that runs SQL.
+     * Suspende as FKs nesta conexão, sem garantia. No PostgreSQL é no-op:
+     * `session_replication_role` exige superuser, indisponível em hosts
+     * gerenciados, e o dump já cria as FKs depois dos dados.
      */
     public static function disableForeignKeys(Connection $db): void
     {
@@ -171,7 +138,7 @@ class DatabaseRestorer
                 Dialect::MYSQL,
                 Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 0'),
                 Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = OFF'),
-                Dialect::POSTGRES => null, // see docblock
+                Dialect::POSTGRES => null, // ver docblock
             };
         } catch (Throwable) { /* best-effort */ }
     }
@@ -183,7 +150,7 @@ class DatabaseRestorer
                 Dialect::MYSQL,
                 Dialect::MARIADB  => $db->unprepared('SET FOREIGN_KEY_CHECKS = 1'),
                 Dialect::SQLITE   => $db->unprepared('PRAGMA foreign_keys = ON'),
-                Dialect::POSTGRES => null, // see docblock on disableForeignKeys
+                Dialect::POSTGRES => null, // ver disableForeignKeys
             };
         } catch (Throwable) { /* best-effort */ }
     }

@@ -21,7 +21,7 @@ class Index
         public readonly array $columns,
         public readonly bool $unique = false,
         public readonly bool $primary = false,
-        /** Optional engine-specific kind ("FULLTEXT", "SPATIAL", "GIN"…). */
+        /** Tipo específico do engine, opcional ("FULLTEXT", "SPATIAL", "GIN"…). */
         public readonly ?string $kind = null,
     ) {
     }

@@ -12,16 +12,12 @@
 namespace Ramon\Backup\Environment;
 
 /**
- * Retrato da stack PHP em que um backup foi gerado — gravado no
- * cabeçalho do arquivo pelo export e conferido pelo import ANTES de
- * qualquer escrita.
+ * Versão do PHP e extensões em que o backup foi gerado, gravadas no
+ * cabeçalho pelo export e conferidas pelo import ANTES de qualquer escrita.
  *
- * A comparação é feita em `major.minor` porque é nessa granularidade
- * que o PHP introduz sintaxe nova. Uma árvore de `vendor/` resolvida
- * sob 8.5 pode conter construções que o parser do 8.3 recusa, e o
- * `composer.lock` que viaja no arquivo aponta exatamente para essas
- * versões. Restaurar por cima troca um fórum vivo por um fatal na
- * primeira requisição, sem etapa intermediária onde alguém perceba.
+ * Compara em `major.minor` porque é aí que o PHP muda a sintaxe: um
+ * `vendor/` resolvido no 8.5 pode ter código que o parser do 8.3 recusa,
+ * e o fórum restaurado morreria na primeira requisição.
  */
 class StackSnapshot
 {
@@ -47,9 +43,7 @@ class StackSnapshot
     ];
 
     /**
-     * Retrato desta origem. A lista de extensões sai ordenada e
-     * contígua pelo próprio `sort()`, que reindexa — envolver em
-     * `array_values()` seria chamada sem efeito.
+     * O `sort()` já reindexa, então dispensa `array_values()`.
      *
      * @return array{php_version: string, php_minor: string, php_extensions: list<string>}
      */
@@ -66,9 +60,8 @@ class StackSnapshot
     }
 
     /**
-     * Reduz uma versão completa ao par `major.minor`. Devolve string
-     * vazia quando o valor não tem forma de versão — o chamador trata
-     * isso como "sem dado" e não bloqueia.
+     * String vazia quando não parece versão; o chamador trata como "sem dado"
+     * e não bloqueia.
      */
     public static function minor(string $version): string
     {
@@ -80,17 +73,11 @@ class StackSnapshot
     }
 
     /**
-     * Motivo pelo qual este servidor NÃO pode receber o arquivo, ou
-     * null quando a restauração pode seguir.
+     * Motivo para este servidor NÃO receber o arquivo, ou null.
      *
-     * O bloqueio vale para qualquer seleção, inclusive só-banco: a
-     * linha `extensions_enabled` da tabela `settings` reativa no
-     * destino extensões que exigem a stack da origem, então restaurar
-     * apenas o banco derruba o fórum do mesmo jeito.
-     *
-     * Arquivos gerados antes deste campo existir ainda são cobertos
-     * pelo `php_version` que o meta de format_version 2 já gravava.
-     * Sem nenhum dos dois não há o que comparar e o import segue.
+     * Vale até para restore só do banco: `extensions_enabled` reativa no
+     * destino extensões que exigem a stack da origem. Arquivos antigos caem
+     * no `php_version` do format_version 2; sem nenhum dos dois, o import segue.
      *
      * @param array<string, mixed> $meta
      * @param list<string>|null $hereExtensions
@@ -135,11 +122,9 @@ class StackSnapshot
     /**
      * Extensões críticas presentes na origem e ausentes aqui.
      *
-     * `$hereExtensions` existe para o teste poder simular um destino
-     * incompleto; em produção fica null e lê o SAPI corrente. Vale
-     * notar que a lista do CLI e a do FPM divergem no mesmo host —
-     * é por isso que a constante é curta e só tem itens sem os quais
-     * o Flarum não sobe em nenhum SAPI.
+     * `$hereExtensions` existe para os testes; em produção lê o SAPI atual.
+     * CLI e FPM podem ter listas diferentes no mesmo host, por isso a
+     * constante só traz o que o Flarum não sobe sem.
      *
      * @param array<string, mixed> $meta
      * @param list<string>|null $hereExtensions
@@ -169,10 +154,9 @@ class StackSnapshot
     }
 
     /**
-     * Avisos não bloqueantes sobre a diferença de stack. Cobre o caso
-     * inverso do bloqueio — subir de 8.3 para 8.5 é seguro de rodar,
-     * mas o `composer.lock` restaurado continua resolvido para a
-     * versão antiga e precisa de um `composer update` no destino.
+     * Avisos não bloqueantes. Subir de 8.3 para 8.5 roda, mas o
+     * `composer.lock` restaurado continua resolvido para a versão antiga e
+     * pede um `composer update` no destino.
      *
      * @param array<string, mixed> $meta
      * @return list<string>
@@ -207,8 +191,7 @@ class StackSnapshot
     }
 
     /**
-     * `major.minor` da origem, aceitando tanto o retrato novo quanto o
-     * `php_version` solto dos arquivos de format_version 2.
+     * Aceita o retrato novo e o `php_version` solto do format_version 2.
      *
      * @param array<string, mixed> $meta
      */

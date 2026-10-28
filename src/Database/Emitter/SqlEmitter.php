@@ -14,58 +14,46 @@ namespace Ramon\Backup\Database\Emitter;
 use Ramon\Backup\Database\Schema\Table;
 
 /**
- * One emitter per target dialect. The dumper feeds it the
- * engine-neutral schema and a stream of typed rows; the emitter
- * produces the actual `CREATE TABLE` / `INSERT` SQL for that dialect.
- *
- * Statements are separated by `\n-- @@END@@\n` (the dumper's universal
- * delimiter), which is a comment in every dialect we target.
+ * Um emitter por dialeto alvo: recebe o schema neutro e as linhas e gera
+ * o `CREATE TABLE` / `INSERT` do dialeto. Statements separados por
+ * `\n-- @@END@@\n`, que é comentário em todos os dialetos.
  */
 interface SqlEmitter
 {
-    /** Header lines that prepare the session (FK toggle, encoding, etc.). */
+    /** Preparação da sessão (toggle de FK, encoding etc.). */
     public function preamble(): string;
 
-    /** Footer lines that re-enable any session toggles set in preamble(). */
+    /** Desfaz os toggles de sessão do preamble(). */
     public function epilogue(): string;
 
     /**
-     * `DROP TABLE IF EXISTS` for one table, in the dialect's safest
-     * form (e.g. PostgreSQL appends CASCADE). The dumper emits these
-     * for EVERY table up front, before any CREATE, so recreating a
-     * parent table can never trip over a leftover child table whose FK
-     * column type differs — and on PostgreSQL a referenced parent can
-     * be dropped without a manual child-first ordering.
+     * `DROP TABLE IF EXISTS` na forma mais segura do dialeto (CASCADE no
+     * PostgreSQL). O dumper emite todos antes de qualquer CREATE, para uma
+     * filha que sobrou com FK de outro tipo não travar o CREATE do pai.
      */
     public function emitDropTable(string $name): string;
 
-    /** `CREATE TABLE` (and any auxiliary statements) for one neutral table. */
     public function emitSchema(Table $table): string;
 
     /**
-     * `INSERT INTO …` for a batch of rows. `$rows` is a list of
-     * column → typed PHP value maps (the source connection's native
-     * row representation). The emitter is responsible for type-correct
-     * quoting.
+     * `$rows` vem no formato nativo da conexão de origem; o quoting por tipo
+     * fica com o emitter.
      *
      * @param list<array<string, mixed>> $rows
      */
     public function emitInserts(Table $table, array $rows): string;
 
     /**
-     * Per-table tail statements emitted after all data is loaded —
-     * used by PostgreSQL to resync sequences with MAX(col)+1, no-op
-     * for the others.
+     * Statements por tabela depois da carga dos dados (FKs e sequências no
+     * PostgreSQL; vazio nos outros).
      */
     public function emitPostDataFixups(Table $table): string;
 
-    /** The dialect tag stored in the archive meta header. */
+    /** Dialeto gravado no meta do arquivo. */
     public function targetTag(): string;
 
     /**
-     * Cross-engine translation notes the emitter accumulated — e.g.
-     * "skipped FULLTEXT index because PG doesn't support it". Empty
-     * for emitters that always render a faithful 1:1 of the source.
+     * Avisos de tradução com perda, ex.: índice FULLTEXT pulado no PG.
      *
      * @return list<string>
      */

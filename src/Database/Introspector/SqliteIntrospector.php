@@ -20,10 +20,9 @@ use Ramon\Backup\Database\Schema\Table;
 use RuntimeException;
 
 /**
- * Reads schema from a live SQLite connection. Uses the standard PRAGMA
- * suite plus a sniff of the original `CREATE TABLE` SQL stored in
- * `sqlite_master`, which is needed because PRAGMA flags don't tell us
- * whether the integer PK column was declared with AUTOINCREMENT.
+ * Lê o schema de SQLite por PRAGMA e pelo `CREATE TABLE` original em
+ * `sqlite_master`: só ele diz se a PK inteira foi declarada com
+ * AUTOINCREMENT.
  */
 class SqliteIntrospector implements SchemaIntrospector
 {
@@ -63,8 +62,7 @@ class SqliteIntrospector implements SchemaIntrospector
         $columns    = $this->readColumns($table, $hasAutoIncr);
         $primary    = [];
         foreach ($columns as $c) {
-            // table_info exposes pk as a non-zero rank; we read it
-            // separately below and then reconcile.
+            // table_info traz pk como posição não nula; reconciliado abaixo.
         }
         $primary    = $this->readPrimaryKey($table);
         $indexes    = $this->readIndexes($table);
@@ -103,8 +101,7 @@ class SqliteIntrospector implements SchemaIntrospector
             $isPk     = ((int) ($r['pk'] ?? 0)) > 0;
             $isInteger = $type->isInteger();
 
-            // SQLite ROWID alias: INTEGER PRIMARY KEY (with or without
-            // AUTOINCREMENT) is the only auto-increment column shape.
+            // Alias do ROWID: INTEGER PRIMARY KEY é a única forma de auto-increment.
             $autoIncrement = $isPk && $isInteger && $tableHasAutoIncrement;
 
             $rawDefault = $r['dflt_value'] ?? null;
@@ -134,12 +131,9 @@ class SqliteIntrospector implements SchemaIntrospector
             $columns[] = new Column(
                 name: (string) $r['name'],
                 type: $type,
-                // A PRIMARY KEY column is never nullable on a target
-                // engine. SQLite reports `notnull = 0` for an INTEGER
-                // PRIMARY KEY (the rowid alias) even though it can't hold
-                // NULL; trusting that flag verbatim would emit an invalid
-                // `NULL AUTO_INCREMENT` / `NULL ... IDENTITY` PK when this
-                // table is later transferred to MySQL or PostgreSQL.
+                // PK nunca é nula no destino. O SQLite reporta `notnull = 0` para o alias
+                // do rowid; confiar nisso geraria uma PK `NULL AUTO_INCREMENT` inválida
+                // no MySQL ou no PostgreSQL.
                 nullable: ((int) ($r['notnull'] ?? 0)) === 0 && ! $isPk,
                 autoIncrement: $autoIncrement,
                 length: $length,
@@ -157,17 +151,13 @@ class SqliteIntrospector implements SchemaIntrospector
     }
 
     /**
-     * SQLite uses dynamic types with affinity rules. We map declared
-     * types to the closest neutral type by simple substring sniffing —
-     * the same heuristic SQLite itself uses internally for affinity.
+     * Mapeia o tipo declarado por substring, a mesma heurística de afinidade
+     * que o próprio SQLite usa.
      */
     private function mapAffinity(string $declared, string $table, string $column): ColumnType
     {
-        // SQLite columns can be declared without any type at all — the
-        // affinity is then "BLOB" by SQLite's own rules, but for our
-        // purposes TEXT is the safer default since values arrive as
-        // strings via PDO. No warning: this is a deliberate SQLite
-        // shape, not a translation gap.
+        // Coluna sem tipo declarado tem afinidade BLOB, mas TEXT é mais seguro
+        // porque o PDO entrega strings. Sem aviso: é uma forma normal do SQLite.
         if ($declared === '') return ColumnType::TEXT;
 
         if (str_contains($declared, 'BIGINT')) return ColumnType::BIGINT;
@@ -189,9 +179,7 @@ class SqliteIntrospector implements SchemaIntrospector
         if (str_contains($declared, 'JSON')) return ColumnType::JSON;
         if (str_contains($declared, 'UUID')) return ColumnType::UUID;
 
-        // Truly unknown declared type — uncommon in SQLite (it
-        // tolerates anything) but worth surfacing because the actual
-        // values may not match TEXT semantics.
+        // Tipo desconhecido: os valores podem não seguir a semântica de TEXT.
         $this->warnings[] = sprintf(
             'Column "%s"."%s" has declared type `%s` which does not match any standard affinity — coerced to TEXT.',
             $table,
@@ -227,12 +215,9 @@ class SqliteIntrospector implements SchemaIntrospector
             $name   = (string) $r['name'];
             $unique = (int) ($r['unique'] ?? 0) === 1;
             $origin = (string) ($r['origin'] ?? '');
-            // Skip indexes created automatically for PK / UNIQUE
-            // constraints — the emitter recreates those from the
-            // primary-key + column definitions.
+            // Índices automáticos de PK e UNIQUE: o emitter os recria pela
+            // definição da tabela.
             if ($origin === 'pk') continue;
-            // Auto-named indexes from UNIQUE constraints are still
-            // worth re-emitting on the destination so behaviour matches.
             if (str_starts_with($name, 'sqlite_autoindex_')) continue;
 
             $colsRows = $this->db->select("PRAGMA index_info(" . $this->quoteIdent($name) . ")");

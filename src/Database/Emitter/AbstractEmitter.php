@@ -14,14 +14,13 @@ namespace Ramon\Backup\Database\Emitter;
 use Ramon\Backup\Database\DatabaseDumper;
 
 /**
- * Shared bits between the three concrete emitters: identifier quoting
- * helpers (one quote char), the "render a literal default" decision
- * tree, and a couple of constants. Concrete emitters override the
- * dialect-specific rendering of values, types, and DDL.
+ * Base comum dos emitters: quoting de identificadores e a decisão de como
+ * renderizar um default literal. Cada dialeto sobrescreve valores, tipos
+ * e DDL.
  */
 abstract class AbstractEmitter implements SqlEmitter
 {
-    /** The character used to quote identifiers in this dialect. */
+    /** Caractere de quoting de identificadores no dialeto. */
     abstract protected function identQuote(): string;
 
     public function emitPostDataFixups(\Ramon\Backup\Database\Schema\Table $table): string
@@ -36,11 +35,9 @@ abstract class AbstractEmitter implements SqlEmitter
     }
 
     /**
-     * Dialect-specific trailer for a DROP TABLE statement. Empty for
-     * MySQL/MariaDB/SQLite (the restore suspends FK enforcement for the
-     * load, so any drop order is safe). PostgreSQL overrides this with
-     * ` CASCADE` so dropping a referenced parent also removes the
-     * dependent FK constraints instead of erroring.
+     * Sufixo do DROP TABLE. Vazio em MySQL/MariaDB/SQLite, onde o restore
+     * suspende as FKs; o PostgreSQL usa ` CASCADE` para derrubar um pai
+     * referenciado sem erro.
      */
     protected function dropTableSuffix(): string
     {
@@ -48,10 +45,6 @@ abstract class AbstractEmitter implements SqlEmitter
     }
 
     /**
-     * Default: no notes. Concrete emitters that record translation
-     * notes (e.g. PG skipping FULLTEXT or oversized btree indexes)
-     * override this.
-     *
      * @return list<string>
      */
     public function warnings(): array
@@ -60,15 +53,10 @@ abstract class AbstractEmitter implements SqlEmitter
     }
 
     /**
-     * Quote an identifier (table name, column name, index name…). The
-     * built-in escape for both backticks and double-quotes is to
-     * double the quote character — that's the SQL standard for `"` and
-     * MySQL's documented escape for `` ` ``.
-     *
-     * Defense-in-depth: identifiers always come from schema introspection
-     * (never request input), but we still reject NUL and control bytes
-     * so a malformed catalog can't smuggle a statement terminator into
-     * the dump.
+     * Escapa dobrando o caractere de quoting: padrão SQL para `"` e o escape
+     * documentado do MySQL para `` ` ``. Identificadores vêm do catálogo, mas
+     * NUL e bytes de controle são recusados para um catálogo malformado não
+     * injetar um terminador de statement no dump.
      */
     protected function quoteIdent(string $ident): string
     {
@@ -85,9 +73,8 @@ abstract class AbstractEmitter implements SqlEmitter
     }
 
     /**
-     * Standard SQL string literal: single quotes around the value,
-     * doubling any embedded single quotes. Engine-specific subclasses
-     * may wrap or replace this for binary, JSON, etc.
+     * Literal SQL padrão, com aspas simples dobradas. Subclasses tratam
+     * binário, JSON etc.
      */
     protected function quoteString(string $value): string
     {
