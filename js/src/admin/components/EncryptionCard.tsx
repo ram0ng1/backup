@@ -141,8 +141,10 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
     this.submitting = true;
     m.redraw();
     try {
+      // Quem fecha este modal é o de revelação da chave, que o substitui.
+      // Um hide() aqui pegava o modal já trocado: a animação nunca
+      // terminava e o modal da chave nova não fechava mais.
       await this.attrs.onConfirm();
-      this.hide();
     } catch {
       // Parent already showed an error toast — keep the modal open so
       // the user can retry without re-acknowledging the warning.
@@ -210,7 +212,7 @@ export default class EncryptionCard extends Component<ComponentAttrs> {
         {!s.has_public_key && !s.private_key_present && (
           <div>
             <p className="helpText">{trans('status.not_setup')}</p>
-            <Button className="Button Button--primary" icon="fas fa-key" onclick={() => this.generate(false)}>
+            <Button className="Button Button--primary" icon="fas fa-key" onclick={() => this.generate(false).catch(() => {})}>
               {trans('actions.generate')}
             </Button>
           </div>
