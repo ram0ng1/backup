@@ -1,41 +1,74 @@
 name: CI
 
+# Mesmo CI do tema Canela, ajustado ao Backup: PHP (testes unitários, lint,
+# PHPStan, auditoria) numa matriz de versões e do flarum/core, a transferência
+# real de banco entre motores, auditoria do npm e paridade das traduções. Os
+# testes de integração com flarum/testing ficam no backend.yml, o workflow do
+# core/FoF.
 on:
   push:
     branches:
       - main
   pull_request:
   workflow_dispatch:
-  # Segunda 05:00 UTC: roda a CI mesmo sem push. Como os jobs resolvem as
-  # dependências com `composer update`, o agendamento testa automaticamente
-  # contra a versão mais nova do flarum/core e detecta quebras trazidas por
-  # novas versões do Flarum antes que cheguem a você.
+  # Segunda 05:00 UTC: roda mesmo sem push. Como as dependências vêm de
+  # `composer update`, isso testa contra o flarum/core mais novo e pega
+  # quebras de uma versão nova do Flarum antes de chegarem ao fórum.
   schedule:
     - cron: '0 5 * * 1'
 
-# Avoid stacking redundant runs for the same PR or branch.
+# Nega tudo ao GITHUB_TOKEN por padrão; cada job declara o que precisa.
+permissions: {}
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Default-deny do GITHUB_TOKEN (§35.13 C1); cada job declara o que precisa.
-permissions: {}
-
 jobs:
+  # Valida o composer.json como está no repositório (antes de a matriz mexer
+  # na versão do core).
+  composer-validate:
+    name: composer validate (--strict)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validar composer.json
+        # Sem campo "version": as versões vêm das tags do git.
+        run: composer validate --strict --no-check-publish
+
   php:
-    name: PHP ${{ matrix.php }}
+    name: PHP ${{ matrix.php }} × flarum/core ${{ matrix.flarum-core }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        # Espelha a constraint ">=8.3 <8.6" do composer.json. 8.2 saiu
-        # (abaixo do piso do flarum/core 2.x) e 8.5 entrou.
+        # O flarum/core 2.x exige PHP ^8.3. O fórum de desenvolvimento roda 8.5.
         php: ['8.3', '8.4', '8.5']
+        # A versão estável E a ponta do core.
+        flarum-core:
+          - '^2.0.0'
+          - '2.x-dev'
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
@@ -46,39 +79,44 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: dom, mbstring, fileinfo, gd, pdo_mysql, pdo_pgsql, pdo_sqlite, sodium
           coverage: none
           tools: composer:v2
 
-      - name: Validar composer.json
-        # O composer.json NÃO tem campo "version": a versão dos releases é
-        # derivada das tags git (ver release-management.yml). --no-check-publish
-        # evita falso-positivo de requisitos de publicação; demais warnings
-        # continuam fatais.
-        run: composer validate --strict --no-check-publish
+      - name: Fixar o flarum/core desta célula
+        run: composer require --no-update "flarum/core:${{ matrix.flarum-core }}"
+
+      - name: Resolver dependências (composer update)
+        # --ignore-platform-req=php+ ignora só o limite SUPERIOR de PHP (para a
+        # célula 8.5, se alguma dependência ainda não declarar suporte).
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts --ignore-platform-req=php+
+
+      - name: Testes unitários
+        run: vendor/bin/phpunit -c tests/phpunit.unit.xml --testsuite unit
 
       - name: Lint PHP (php -l)
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(find src migrations extend.php -name '*.php' -print0 2>/dev/null)
+          mapfile -d '' files < <(find src migrations extend.php tests -name '*.php' -print0 2>/dev/null)
           [ "${#files[@]}" -gt 0 ] || { echo "Nenhum arquivo PHP encontrado"; exit 1; }
           printf '%s\0' "${files[@]}" | xargs -0 -n1 -P4 php -l
 
-  # ---------------------------------------------------------------------------
-  # Database transfer tests.
-  #
-  # The unit suite (Dialect detection, incl. the mariadb-driver regression)
-  # runs in every job since it needs no server. The integration suite drives
-  # the real dump/restore engine: for a given (source → target) pair to run,
-  # BOTH engines must be reachable, otherwise that direction is skipped. So:
-  #
-  #   • the per-engine jobs below pin a SERVER version and run that engine's
-  #     same-engine round-trip + every direction it shares with SQLite
-  #     (which is always available) — this is the per-version coverage;
-  #   • the `tests-all-directions` job brings up mysql + mariadb + postgres
-  #     + sqlite together so the FULL source×target matrix executes — this is
-  #     the "works in every direction" gate.
-  tests-mysql:
-    name: Tests · MySQL ${{ matrix.version }}
+      - name: composer audit
+        run: composer audit --no-dev --format=plain
+
+      # PHPStan nível 6 com a extensão do Flarum (flarum/phpstan), sem
+      # baseline: o mesmo padrão do core e da FoF.
+      - name: PHPStan
+        if: matrix.php == '8.3' && matrix.flarum-core == '^2.0.0'
+        run: composer analyse:phpstan
+
+  # Dump e restore reais entre MySQL, MariaDB, PostgreSQL e SQLite. Um par
+  # (origem → destino) só roda quando os dois motores estão no ar: os jobs por
+  # motor fixam a versão do servidor e cobrem o par com o SQLite (sempre
+  # disponível); o `transfer-all-directions` sobe os quatro juntos e roda a
+  # matriz completa.
+  transfer-mysql:
+    name: Transferência · MySQL ${{ matrix.version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -101,22 +139,29 @@ jobs:
       BACKUP_TEST_MYSQL: 'host=127.0.0.1;port=3306;username=root;password=root;database=backup_xfer_test'
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: '8.3'
           extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
           coverage: none
           tools: composer:v2
-      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
-      - run: vendor/bin/phpunit --testdox
 
-  tests-mariadb:
-    name: Tests · MariaDB ${{ matrix.version }}
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
+
+      - name: Transferência entre motores
+        run: vendor/bin/phpunit -c tests/phpunit.transfer.xml --testdox
+
+  transfer-mariadb:
+    name: Transferência · MariaDB ${{ matrix.version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -136,28 +181,34 @@ jobs:
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
           --health-interval=10s --health-timeout=5s --health-retries=20
     env:
-      # Driver `mariadb` (illuminate v13's dedicated one) makes the
-      # connection report driverName=mariadb — the exact path that
-      # regressed. The harness picks it from the engine key, not env.
+      # O driver `mariadb` do illuminate faz a conexão se apresentar como
+      # mariadb, o caminho que já regrediu.
       BACKUP_TEST_MARIADB: 'host=127.0.0.1;port=3306;username=root;password=root;database=backup_xfer_test'
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: '8.3'
           extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
           coverage: none
           tools: composer:v2
-      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
-      - run: vendor/bin/phpunit --testdox
 
-  tests-postgres:
-    name: Tests · PostgreSQL ${{ matrix.version }}
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
+
+      - name: Transferência entre motores
+        run: vendor/bin/phpunit -c tests/phpunit.transfer.xml --testdox
+
+  transfer-postgres:
+    name: Transferência · PostgreSQL ${{ matrix.version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -180,22 +231,29 @@ jobs:
       BACKUP_TEST_POSTGRES: 'host=127.0.0.1;port=5432;username=postgres;password=postgres;database=backup_xfer_test'
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: '8.3'
           extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
           coverage: none
           tools: composer:v2
-      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
-      - run: vendor/bin/phpunit --testdox
 
-  tests-all-directions:
-    name: Tests · all directions (mysql+mariadb+postgres+sqlite)
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
+
+      - name: Transferência entre motores
+        run: vendor/bin/phpunit -c tests/phpunit.transfer.xml --testdox
+
+  transfer-all-directions:
+    name: Transferência · todas as direções
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,7 +274,7 @@ jobs:
           MARIADB_ROOT_PASSWORD: root
           MARIADB_DATABASE: backup_xfer_test
         ports:
-          # Host 3307 to avoid colliding with mysql's 3306 mapping.
+          # 3307 no host para não colidir com o 3306 do mysql.
           - 3307:3306
         options: >-
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
@@ -237,55 +295,42 @@ jobs:
       BACKUP_TEST_POSTGRES: 'host=127.0.0.1;port=5432;username=postgres;password=postgres;database=backup_xfer_test'
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
-        with:
-          php-version: '8.3'
-          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
-          coverage: none
-          tools: composer:v2
-      - run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
-      - run: vendor/bin/phpunit --testdox
-
-  js:
-    name: JS (typecheck, format, build)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      # Setup PHP + composer for the Flarum core typings. The js/tsconfig
-      # resolves `flarum/*` imports through `../vendor/flarum/core/js/dist-typings/*`,
-      # so without composer install the type-check fails with TS2307.
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: '8.3'
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
           coverage: none
           tools: composer:v2
 
-      - name: Cache do composer
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
-        with:
-          path: ~/.cache/composer
-          key: composer-${{ runner.os }}-${{ hashFiles('composer.json') }}
-          restore-keys: composer-${{ runner.os }}-
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
 
-      - name: Instalar dependências PHP (para os typings do core)
-        # `composer update` (em vez de install) porque a extensão é uma
-        # lib e mantém composer.lock no .gitignore.
-        run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - name: Transferência entre motores
+        run: vendor/bin/phpunit -c tests/phpunit.transfer.xml --testdox
+
+  # Formatação, tipos e build ficam no frontend.yml (o workflow do core);
+  # aqui só a auditoria das dependências JS.
+  js:
+    name: npm audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
@@ -294,33 +339,26 @@ jobs:
           cache: 'npm'
           cache-dependency-path: js/package-lock.json
 
-      - name: Instalar dependências JS
+      # Todo o node_modules é de build: o pacote publicado é js/dist/*.js.
+      # Bloqueia só o que chegaria à produção; o resto fica visível no log.
+      - name: npm audit (produção — bloqueia)
         working-directory: js
-        run: npm ci
+        run: npm audit --audit-level=high --omit=dev
 
-      - name: Verificar formatação (Prettier)
+      - name: npm audit (dev — informativo)
         working-directory: js
-        run: npm run format-check
+        continue-on-error: true
+        run: npm audit --audit-level=high
 
-      - name: Type-check (TypeScript)
-        working-directory: js
-        run: npm run check-typings
-
-      - name: Build (webpack production)
-        working-directory: js
-        run: npm run build
-
-  # §35.13 R3 — nível 6 com baseline versionado (phpstan.neon +
-  # phpstan-baseline.neon). BLOQUEANTE: o baseline mantém verde e novos
-  # achados reprovam o PR (aperte o nível/baseline com o tempo).
-  phpstan:
-    name: PHPStan (nível 6, baseline)
+  # Paridade das traduções (en ↔ pt-BR): não depende da versão do PHP/core.
+  locale:
+    name: Paridade das traduções
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
         with:
           egress-policy: audit
 
@@ -331,12 +369,37 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240  # v2
         with:
           php-version: '8.3'
-          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, intl, gd, bcmath, sodium
+          extensions: dom, mbstring
           coverage: none
           tools: composer:v2
 
-      - name: Instalar dependências
-        run: composer update --no-interaction --no-progress --prefer-dist --no-scripts
+      - name: Resolver dependências (composer update)
+        run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
 
-      - name: PHPStan analyse
-        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G --error-format=github
+      - name: Chaves en ↔ pt-BR
+        run: vendor/bin/phpunit -c tests/phpunit.unit.xml --testsuite locale
+
+  # Reprova PRs que tragam dependências com vulnerabilidade conhecida. Só em
+  # repositório público: no privado a ação exige o GitHub Advanced Security
+  # (lá o `composer audit` da matriz já cobre as dependências PHP).
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
