@@ -1,0 +1,219 @@
+.BackupExport-fieldset,
+.BackupImport-fieldset {
+  border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+
+  legend {
+    padding: 0 6px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+}
+
+.BackupExport-checkbox {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: start;
+  gap: 4px 8px;
+  margin: 6px 0;
+}
+.BackupExport-checkbox input { margin-top: 4px; }
+.BackupExport-checkbox-label { font-weight: 600; }
+.BackupExport-checkbox-help {
+  grid-column: 2;
+  margin: 0;
+  font-size: 12px;
+}
+
+.BackupExport-extList,
+.BackupImport-extList {
+  margin: 4px 0 8px 28px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--control-bg, rgba(0, 0, 0, 0.10));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.BackupExport-extLoading,
+.BackupExport-extEmpty {
+  margin: 4px 0 8px 28px;
+  padding: 8px 0;
+}
+.BackupExport-extActions {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.BackupExport-extLink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link-color, #1d9bf0);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+}
+.BackupExport-extGroup {
+  margin-bottom: 4px;
+}
+.BackupExport-extGroupHeader {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted-color);
+  margin: 4px 0;
+}
+.BackupExport-extRow,
+.BackupImport-extRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  flex-wrap: wrap;
+
+  code,
+  .BackupExport-extName,
+  .BackupImport-extName {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--muted-color);
+  }
+}
+.BackupExport-extTitle,
+.BackupImport-extTitle {
+  font-weight: 600;
+}
+.BackupExport-extTag,
+.BackupImport-extTag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  margin-left: auto;
+}
+.BackupExport-extTag--workbench,
+.BackupImport-extTag--workbench {
+  background: rgba(46, 204, 113, 0.18);
+  color: #2ecc71;
+}
+.BackupExport-extTag--vendor,
+.BackupImport-extTag--vendor {
+  background: rgba(155, 89, 182, 0.18);
+  color: #9b59b6;
+}
+.BackupExport-extTag--unknown,
+.BackupImport-extTag--unknown {
+  background: var(--control-bg, rgba(0, 0, 0, 0.06));
+  color: var(--muted-color);
+}
+
+.BackupImport-composerNote {
+  margin: 4px 0 8px 28px;
+  font-size: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(155, 89, 182, 0.08);
+  color: var(--muted-color);
+
+  .icon { margin-top: 2px; color: #9b59b6; }
+}
+
+.BackupExport-keyInput,
+.BackupImport-keyInput {
+  width: 100%;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.BackupExport-progress,
+.BackupImport-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.BackupExport-status,
+.BackupImport-status {
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--control-bg, rgba(0, 0, 0, 0.04));
+
+  strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+  p { margin: 0; font-size: 13px; opacity: 0.85; }
+}
+.BackupExport-status--error,
+.BackupImport-status--error {
+  background: rgba(231, 76, 60, 0.10);
+  color: #e74c3c;
+}
+.BackupExport-status--done,
+.BackupImport-status--done {
+  background: rgba(46, 204, 113, 0.10);
+  color: #2ecc71;
+}
+
+.BackupExport-bar,
+.BackupImport-bar {
+  height: 10px;
+  background: var(--control-bg, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  overflow: hidden;
+}
+.BackupExport-bar-fill,
+.BackupImport-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1d9bf0, #2ecc71);
+  transition: width 0.25s ease-out;
+}
+
+.BackupExport-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted-color);
+}
+
+.BackupExport-progress-actions,
+.BackupImport-progress-actions {
+  text-align: right;
+}
+
+// Lossy-translation warnings — visible whenever the introspector
+// flags a column that doesn't fully round-trip (generated columns,
+// SET, spatial types, unrecognised engine-specific types).
+.BackupExport-warnings {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgba(255, 159, 64, 0.10);
+  border: 1px solid rgba(255, 159, 64, 0.45);
+}
+.BackupExport-warnings-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+
+  .icon {
+    color: #d97706;
+    margin-right: 4px;
+  }
+}
+.BackupExport-warnings-list {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.5;
+
+  li {
+    margin-bottom: 4px;
+    word-break: break-word;
+  }
+}
