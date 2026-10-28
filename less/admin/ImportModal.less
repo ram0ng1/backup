@@ -1,27 +1,23 @@
 .BackupImport-uploadProgress {
   margin: 12px 0;
 }
-.BackupImport-bar {
-  height: 8px;
-  background: var(--control-bg, rgba(0, 0, 0, 0.08));
-  border-radius: 999px;
-  overflow: hidden;
-}
-.BackupImport-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #1d9bf0, #2ecc71);
-  transition: width 0.2s ease-out;
-}
 .BackupImport-bar-fill--indeterminate {
   width: 40%;
   animation: BackupImport-indeterminate 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .BackupImport-bar-fill--indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
 }
 @keyframes BackupImport-indeterminate {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(250%); }
 }
 .BackupImport-uploadStatus {
-  margin-top: 4px;
+  margin-top: 8px;
   font-size: 12px;
   text-align: center;
 }
@@ -112,10 +108,11 @@
   display: block;
   border: 2px dashed var(--control-bg, rgba(0, 0, 0, 0.20));
   border-radius: 6px;
-  padding: 24px;
+  padding: 24px 16px;
   text-align: center;
   cursor: pointer;
-  margin: 12px 0;
+  margin: 20px 0;
+  word-break: break-word;
 
   input[type='file'] {
     display: block;
@@ -125,35 +122,47 @@
 
 .BackupImport-meta {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
   font-size: 13px;
-  margin: 12px 0;
+  margin: 12px 0 20px;
 
   dt {
     font-weight: 600;
     color: var(--muted-color);
   }
-  dd { margin: 0; }
+  // URL e lista de conteúdo quebram dentro da coluna em vez de vazar do modal.
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
 
 .BackupImport-confirmAlert {
-  margin-top: 16px;
+  margin: 20px 0;
 }
 .BackupImport-confirm {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 12px;
   font-weight: 600;
+
+  input { flex-shrink: 0; margin: 3px 0 0; }
 }
 .BackupImport-keyHint {
-  margin-top: 6px;
+  margin: 8px 0 0;
   font-size: 11px;
+}
+.BackupImport-advisories {
+  margin: 0 0 16px;
+
+  ul { margin: 0; padding-left: 18px; }
 }
 
 .BackupImport-urlNote {
-  margin-top: 12px;
+  margin: 0 0 20px;
   font-size: 12px;
   display: flex;
   align-items: flex-start;
@@ -168,9 +177,17 @@
 
 .BackupImport-sectionRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  margin: 6px 0;
+  margin: 10px 0;
+
+  input { flex-shrink: 0; margin: 3px 0 0; }
+}
+.BackupImport-sectionLabel {
+  min-width: 0;
+}
+.BackupImport-sectionCount {
+  white-space: nowrap;
 }
 .BackupImport-sectionLabel {
   font-weight: 600;
@@ -183,38 +200,17 @@
 // Separado por uma régua de propósito: são escolhas de natureza
 // diferente das caixas "o que do backup aplicar" acima.
 .BackupImport-serverState {
-  margin-top: 14px;
-  padding-top: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
 
   h4 {
-    margin: 0 0 4px;
+    margin: 0 0 6px;
     font-size: 13px;
     font-weight: 600;
   }
 
   > .helpText {
     margin-bottom: 8px;
-  }
-}
-
-.BackupImport-extList {
-  margin: 4px 0 8px 28px;
-  padding: 8px 12px;
-  border-left: 2px solid var(--control-bg, rgba(0, 0, 0, 0.10));
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.BackupImport-extRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-
-  code {
-    font-family: monospace;
-    font-size: 12px;
-    color: var(--muted-color);
   }
 }

@@ -1,14 +1,28 @@
+// Ritmo vertical dos modais: um bloco nunca encosta no seguinte.
+.BackupExportModal,
+.BackupImportModal {
+  .Modal-body > .helpText:first-child {
+    margin: 0 0 20px;
+  }
+}
+
 .BackupExport-fieldset,
 .BackupImport-fieldset {
   border: 1px solid var(--control-bg, rgba(0, 0, 0, 0.08));
   border-radius: 6px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
+  padding: 12px 16px 16px;
+  margin: 0 0 20px;
+  min-width: 0;
 
   legend {
     padding: 0 6px;
+    margin-bottom: 8px;
     font-weight: 600;
     font-size: 13px;
+  }
+
+  > .helpText {
+    margin: 0 0 10px;
   }
 }
 
@@ -17,7 +31,10 @@
   grid-template-columns: 20px 1fr;
   align-items: start;
   gap: 4px 8px;
-  margin: 6px 0;
+  margin: 10px 0;
+}
+.BackupExport-checkbox + .helpText {
+  margin: -4px 0 10px 28px;
 }
 .BackupExport-checkbox input { margin-top: 4px; }
 .BackupExport-checkbox-label { font-weight: 600; }
@@ -29,12 +46,12 @@
 
 .BackupExport-extList,
 .BackupImport-extList {
-  margin: 4px 0 8px 28px;
+  margin: 8px 0 12px 28px;
   padding: 8px 12px;
   border-left: 2px solid var(--control-bg, rgba(0, 0, 0, 0.10));
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .BackupExport-extLoading,
 .BackupExport-extEmpty {
@@ -43,7 +60,7 @@
 }
 .BackupExport-extActions {
   font-size: 12px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 .BackupExport-extLink {
   background: none;
@@ -55,14 +72,17 @@
   text-decoration: underline;
 }
 .BackupExport-extGroup {
-  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .BackupExport-extGroupHeader {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--muted-color);
-  margin: 4px 0;
+  margin: 4px 0 0;
 }
 .BackupExport-extRow,
 .BackupImport-extRow {
@@ -70,19 +90,35 @@
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  flex-wrap: wrap;
+  min-width: 0;
 
+  input {
+    flex-shrink: 0;
+    margin: 0;
+  }
+
+  // O nome do pacote encolhe com reticências: no celular a etiqueta
+  // continua na mesma linha em vez de cair desalinhada embaixo.
   code,
   .BackupExport-extName,
   .BackupImport-extName {
     font-family: monospace;
     font-size: 11px;
     color: var(--muted-color);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 .BackupExport-extTitle,
 .BackupImport-extTitle {
   font-weight: 600;
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .BackupExport-extTag,
 .BackupImport-extTag {
@@ -94,6 +130,7 @@
   letter-spacing: 0.5px;
   font-weight: 600;
   margin-left: auto;
+  flex-shrink: 0;
 }
 .BackupExport-extTag--workbench,
 .BackupImport-extTag--workbench {
@@ -112,7 +149,7 @@
 }
 
 .BackupImport-composerNote {
-  margin: 4px 0 8px 28px;
+  margin: 8px 0 12px 28px;
   font-size: 12px;
   display: flex;
   align-items: flex-start;
@@ -128,6 +165,7 @@
 .BackupExport-keyInput,
 .BackupImport-keyInput {
   width: 100%;
+  margin-top: 4px;
   font-family: monospace;
   font-size: 11px;
 }
@@ -136,7 +174,7 @@
 .BackupImport-progress {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 .BackupExport-status,
 .BackupImport-status {
@@ -148,17 +186,21 @@
     display: block;
     margin-bottom: 4px;
   }
-  p { margin: 0; font-size: 13px; opacity: 0.85; }
+  p { margin: 0; font-size: 13px; word-break: break-word; }
 }
+// Só o título leva a cor do estado: texto verde ou vermelho sobre fundo
+// da mesma cor fica ilegível no tema claro.
 .BackupExport-status--error,
 .BackupImport-status--error {
   background: rgba(231, 76, 60, 0.10);
-  color: #e74c3c;
+
+  strong { color: #e74c3c; }
 }
 .BackupExport-status--done,
 .BackupImport-status--done {
   background: rgba(46, 204, 113, 0.10);
-  color: #2ecc71;
+
+  strong { color: #27ae60; }
 }
 
 .BackupExport-bar,
@@ -177,14 +219,21 @@
 
 .BackupExport-stats {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   justify-content: space-between;
   font-size: 12px;
   color: var(--muted-color);
 }
 
-.BackupExport-progress-actions,
-.BackupImport-progress-actions {
-  text-align: right;
+.Modal-body .BackupExport-progress-actions,
+.Modal-body .BackupImport-progress-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 4px 0 0;
 }
 
 // Avisos de conversão com perda: colunas que não voltam iguais em outro
