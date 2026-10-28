@@ -1,10 +1,10 @@
-import app from "flarum/admin/app";
-import Modal, { IInternalModalAttrs } from "flarum/common/components/Modal";
-import Button from "flarum/common/components/Button";
-import LoadingIndicator from "flarum/common/components/LoadingIndicator";
-import type Mithril from "mithril";
+import app from 'flarum/admin/app';
+import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
+import Button from 'flarum/common/components/Button';
+import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
+import type Mithril from 'mithril';
 
-import { apiRequest, apiUrl, errorDetail, fmtBytes } from "../utils/api";
+import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
 
 export interface ExportModalAttrs extends IInternalModalAttrs {
   onComplete: () => void;
@@ -15,14 +15,14 @@ interface ExtensionEntry {
   name: string;
   title: string;
   version: string;
-  location: "workbench" | "vendor" | "unknown";
+  location: 'workbench' | 'vendor' | 'unknown';
   path: string;
   relative: string;
   enabled: boolean;
 }
 
 interface ExportProgress {
-  phase: "scan" | "db_dump" | "bundle" | "finalize" | "done" | "error";
+  phase: 'scan' | 'db_dump' | 'bundle' | 'finalize' | 'done' | 'error';
   message: string;
   progress: {
     total_bytes: number;
@@ -46,8 +46,7 @@ interface ExportProgress {
   warnings?: string[];
 }
 
-const trans = (key: string, params?: Record<string, unknown>) =>
-  app.translator.trans(`ramon-backup.admin.export_modal.${key}`, params ?? {});
+const trans = (key: string, params?: Record<string, unknown>) => app.translator.trans(`ramon-backup.admin.export_modal.${key}`, params ?? {});
 
 /**
  * Two-stage modal:
@@ -62,7 +61,7 @@ const trans = (key: string, params?: Record<string, unknown>) =>
  * one in *this* config.php.
  */
 export default class ExportModal extends Modal<ExportModalAttrs> {
-  protected stage: "form" | "progress" = "form";
+  protected stage: 'form' | 'progress' = 'form';
 
   protected includeDb = true;
   protected includeAssets = true;
@@ -79,15 +78,14 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
 
   protected encryptionEnabled = false;
   protected encryptionUseExternal = false;
-  protected externalPublicKey = "";
+  protected externalPublicKey = '';
 
   // Target engine the dump should be generated for. Empty string =
   // "same as source" (the most common case — backing up to restore
   // onto the same install / a clone of it). The non-empty values
   // make this a cross-engine migration: e.g. dump from MySQL,
   // restore onto Postgres.
-  protected targetDialect: "" | "mysql" | "mariadb" | "postgres" | "sqlite" =
-    "";
+  protected targetDialect: '' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' = '';
 
   protected starting = false;
   protected jobId: string | null = null;
@@ -95,15 +93,15 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   protected polling = false;
 
   className() {
-    return "BackupExportModal Modal--medium";
+    return 'BackupExportModal Modal--medium';
   }
 
   title() {
-    return trans("title");
+    return trans('title');
   }
 
   content() {
-    if (this.stage === "form") return this.formContent();
+    if (this.stage === 'form') return this.formContent();
     return this.progressContent();
   }
 
@@ -112,28 +110,28 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   formContent() {
     return (
       <div className="Modal-body">
-        <p className="helpText">{trans("intro")}</p>
+        <p className="helpText">{trans('intro')}</p>
 
         <fieldset className="BackupExport-fieldset">
-          <legend>{trans("contents_title")}</legend>
+          <legend>{trans('contents_title')}</legend>
 
           {this.checkbox(
-            "db",
+            'db',
             () => this.includeDb,
-            (v) => (this.includeDb = v),
+            (v) => (this.includeDb = v)
           )}
           {this.checkbox(
-            "assets",
+            'assets',
             () => this.includeAssets,
-            (v) => (this.includeAssets = v),
+            (v) => (this.includeAssets = v)
           )}
           {this.checkbox(
-            "storage",
+            'storage',
             () => this.includeStorage,
-            (v) => (this.includeStorage = v),
+            (v) => (this.includeStorage = v)
           )}
           {this.checkbox(
-            "extensions",
+            'extensions',
             () => this.includeExtensions,
             (v) => {
               this.includeExtensions = v;
@@ -141,7 +139,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
               // someone ticks the box. The list comes back fast (no
               // disk walking — just metadata from the ExtensionManager).
               if (v && !this.extensionsLoaded) this.loadExtensions();
-            },
+            }
           )}
 
           {this.includeExtensions && this.extensionList()}
@@ -149,27 +147,26 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
 
         {this.includeDb && (
           <fieldset className="BackupExport-fieldset">
-            <legend>{trans("target_title")}</legend>
-            <p className="helpText">{trans("target_help")}</p>
+            <legend>{trans('target_title')}</legend>
+            <p className="helpText">{trans('target_help')}</p>
             <select
               className="FormControl BackupExport-targetSelect"
               value={this.targetDialect}
               onchange={(e: Event) => {
-                this.targetDialect = (e.target as HTMLSelectElement)
-                  .value as typeof this.targetDialect;
+                this.targetDialect = (e.target as HTMLSelectElement).value as typeof this.targetDialect;
               }}
             >
-              <option value="">{trans("target_same")}</option>
-              <option value="mysql">{trans("target_mysql")}</option>
-              <option value="mariadb">{trans("target_mariadb")}</option>
-              <option value="postgres">{trans("target_postgres")}</option>
-              <option value="sqlite">{trans("target_sqlite")}</option>
+              <option value="">{trans('target_same')}</option>
+              <option value="mysql">{trans('target_mysql')}</option>
+              <option value="mariadb">{trans('target_mariadb')}</option>
+              <option value="postgres">{trans('target_postgres')}</option>
+              <option value="sqlite">{trans('target_sqlite')}</option>
             </select>
           </fieldset>
         )}
 
         <fieldset className="BackupExport-fieldset">
-          <legend>{trans("encryption_title")}</legend>
+          <legend>{trans('encryption_title')}</legend>
 
           <label className="BackupExport-checkbox">
             <input
@@ -178,10 +175,10 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
               onchange={(e: Event) => {
                 this.encryptionEnabled = (e.target as HTMLInputElement).checked;
               }}
-            />{" "}
-            <span>{trans("encryption_enable")}</span>
+            />{' '}
+            <span>{trans('encryption_enable')}</span>
           </label>
-          <p className="helpText">{trans("encryption_help")}</p>
+          <p className="helpText">{trans('encryption_help')}</p>
 
           {this.encryptionEnabled && (
             <>
@@ -190,27 +187,21 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
                   type="checkbox"
                   checked={this.encryptionUseExternal}
                   onchange={(e: Event) => {
-                    this.encryptionUseExternal = (
-                      e.target as HTMLInputElement
-                    ).checked;
+                    this.encryptionUseExternal = (e.target as HTMLInputElement).checked;
                   }}
-                />{" "}
-                <span>{trans("encryption_external")}</span>
+                />{' '}
+                <span>{trans('encryption_external')}</span>
               </label>
               {this.encryptionUseExternal && (
                 <>
-                  <p className="helpText">
-                    {trans("encryption_external_help")}
-                  </p>
+                  <p className="helpText">{trans('encryption_external_help')}</p>
                   <textarea
                     className="FormControl BackupExport-keyInput"
                     rows={3}
                     placeholder="base64 public key"
                     value={this.externalPublicKey}
                     oninput={(e: Event) => {
-                      this.externalPublicKey = (
-                        e.target as HTMLTextAreaElement
-                      ).value;
+                      this.externalPublicKey = (e.target as HTMLTextAreaElement).value;
                     }}
                   />
                 </>
@@ -226,7 +217,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             disabled={this.starting || !this.canStart()}
             onclick={() => this.start()}
           >
-            {trans("start_button")}
+            {trans('start_button')}
           </Button>
         </div>
       </div>
@@ -242,11 +233,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       );
     }
     if (!this.extensions.length) {
-      return (
-        <p className="helpText BackupExport-extEmpty">
-          {trans("extensions_none")}
-        </p>
-      );
+      return <p className="helpText BackupExport-extEmpty">{trans('extensions_none')}</p>;
     }
 
     const groups: Record<string, ExtensionEntry[]> = {
@@ -259,20 +246,12 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     return (
       <div className="BackupExport-extList">
         <div className="BackupExport-extActions">
-          <button
-            type="button"
-            className="BackupExport-extLink"
-            onclick={() => this.toggleAllExtensions(true)}
-          >
-            {trans("extensions_select_all")}
+          <button type="button" className="BackupExport-extLink" onclick={() => this.toggleAllExtensions(true)}>
+            {trans('extensions_select_all')}
           </button>
           <span> · </span>
-          <button
-            type="button"
-            className="BackupExport-extLink"
-            onclick={() => this.toggleAllExtensions(false)}
-          >
-            {trans("extensions_select_none")}
+          <button type="button" className="BackupExport-extLink" onclick={() => this.toggleAllExtensions(false)}>
+            {trans('extensions_select_none')}
           </button>
         </div>
 
@@ -281,13 +260,12 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           mixed `[vnode-with-key, null, vnode-with-key]` arrays
           ("In fragments, vnodes must either all have keys or none").
         */}
-        {(["workbench", "vendor", "unknown"] as const)
+        {(['workbench', 'vendor', 'unknown'] as const)
           .filter((loc) => groups[loc].length > 0)
           .map((loc) => (
             <div className="BackupExport-extGroup" key={loc}>
               <div className="BackupExport-extGroupHeader">
-                {trans("extensions_group_" + loc)}{" "}
-                <span className="helpText">({groups[loc].length})</span>
+                {trans('extensions_group_' + loc)} <span className="helpText">({groups[loc].length})</span>
               </div>
               {groups[loc].map((ext) => (
                 <label className="BackupExport-extRow" key={ext.id}>
@@ -295,20 +273,11 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
                     type="checkbox"
                     checked={!!this.extensionSelected[ext.id]}
                     onchange={(e: Event) => {
-                      this.extensionSelected[ext.id] = (
-                        e.target as HTMLInputElement
-                      ).checked;
+                      this.extensionSelected[ext.id] = (e.target as HTMLInputElement).checked;
                     }}
-                  />{" "}
-                  <span className="BackupExport-extTitle">{ext.title}</span>{" "}
-                  <code className="BackupExport-extName">
-                    {ext.name || ext.id}
-                  </code>
-                  <span
-                    className={`BackupExport-extTag BackupExport-extTag--${ext.location}`}
-                  >
-                    {trans("extensions_tag_" + ext.location)}
-                  </span>
+                  />{' '}
+                  <span className="BackupExport-extTitle">{ext.title}</span> <code className="BackupExport-extName">{ext.name || ext.id}</code>
+                  <span className={`BackupExport-extTag BackupExport-extTag--${ext.location}`}>{trans('extensions_tag_' + ext.location)}</span>
                 </label>
               ))}
             </div>
@@ -325,7 +294,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     this.extensionsLoading = true;
     try {
       const res = await apiRequest<{ extensions: ExtensionEntry[] }>({
-        method: "GET",
+        method: 'GET',
         url: `${apiUrl()}/backup/extensions`,
         surface: false,
       });
@@ -335,21 +304,14 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       // ones they don't want.
       for (const ext of this.extensions) this.extensionSelected[ext.id] = true;
     } catch (e) {
-      app.alerts.show(
-        { type: "error" },
-        errorDetail(e, String(trans("extensions_load_failed"))),
-      );
+      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('extensions_load_failed'))));
     } finally {
       this.extensionsLoading = false;
       m.redraw();
     }
   }
 
-  checkbox(
-    key: "db" | "assets" | "storage" | "extensions",
-    get: () => boolean,
-    set: (v: boolean) => void,
-  ) {
+  checkbox(key: 'db' | 'assets' | 'storage' | 'extensions', get: () => boolean, set: (v: boolean) => void) {
     return (
       <label className="BackupExport-checkbox">
         <input
@@ -358,31 +320,18 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           onchange={(e: Event) => {
             set((e.target as HTMLInputElement).checked);
           }}
-        />{" "}
-        <span className="BackupExport-checkbox-label">
-          {trans("content_" + key)}
-        </span>
-        <span className="BackupExport-checkbox-help helpText">
-          {trans("content_" + key + "_help")}
-        </span>
+        />{' '}
+        <span className="BackupExport-checkbox-label">{trans('content_' + key)}</span>
+        <span className="BackupExport-checkbox-help helpText">{trans('content_' + key + '_help')}</span>
       </label>
     );
   }
 
   canStart(): boolean {
-    if (
-      !this.includeDb &&
-      !this.includeAssets &&
-      !this.includeStorage &&
-      !this.includeExtensions
-    ) {
+    if (!this.includeDb && !this.includeAssets && !this.includeStorage && !this.includeExtensions) {
       return false;
     }
-    if (
-      this.encryptionEnabled &&
-      this.encryptionUseExternal &&
-      !this.externalPublicKey.trim()
-    ) {
+    if (this.encryptionEnabled && this.encryptionUseExternal && !this.externalPublicKey.trim()) {
       return false;
     }
     return true;
@@ -394,14 +343,14 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     const s = this.status;
     if (!s) return <LoadingIndicator />;
 
-    const isDone = s.phase === "done";
-    const isError = s.phase === "error";
+    const isDone = s.phase === 'done';
+    const isError = s.phase === 'error';
     const pct = Math.max(0, Math.min(100, s.progress?.percent || 0));
 
     return (
       <div className="Modal-body BackupExport-progress">
         <div className={`BackupExport-status BackupExport-status--${s.phase}`}>
-          <strong>{trans("phase_" + s.phase)}</strong>
+          <strong>{trans('phase_' + s.phase)}</strong>
           <p>{s.message}</p>
         </div>
 
@@ -419,12 +368,11 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             </div>
             <div className="BackupExport-stats">
               <span>
-                {fmtBytes(s.progress.processed_bytes)} /{" "}
-                {fmtBytes(s.progress.total_bytes || s.progress.processed_bytes)}
+                {fmtBytes(s.progress.processed_bytes)} / {fmtBytes(s.progress.total_bytes || s.progress.processed_bytes)}
               </span>
               {s.progress.total_files > 0 && (
                 <span>
-                  {trans("files_count", {
+                  {trans('files_count', {
                     done: s.progress.processed_files,
                     total: s.progress.total_files,
                   })}
@@ -445,10 +393,9 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         {(s.warnings?.length ?? 0) > 0 && (
           <div className="BackupExport-warnings" role="alert">
             <div className="BackupExport-warnings-title">
-              <i className="icon fas fa-triangle-exclamation" />{" "}
-              {trans("warnings_title", { count: s.warnings!.length })}
+              <i className="icon fas fa-triangle-exclamation" /> {trans('warnings_title', { count: s.warnings!.length })}
             </div>
-            <p className="helpText">{trans("warnings_help")}</p>
+            <p className="helpText">{trans('warnings_help')}</p>
             <ul className="BackupExport-warnings-list">
               {s.warnings!.map((w, idx) => (
                 <li key={idx}>{w}</li>
@@ -460,15 +407,12 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         <div className="Form-group BackupExport-progress-actions">
           {!isDone && !isError && (
             <Button className="Button" onclick={() => this.cancel()}>
-              {trans("cancel_button")}
+              {trans('cancel_button')}
             </Button>
           )}
           {(isDone || isError) && (
-            <Button
-              className="Button Button--primary"
-              onclick={() => this.close()}
-            >
-              {trans("close_button")}
+            <Button className="Button Button--primary" onclick={() => this.close()}>
+              {trans('close_button')}
             </Button>
           )}
         </div>
@@ -503,7 +447,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         phase: string;
         message: string;
       }>({
-        method: "POST",
+        method: 'POST',
         url: `${apiUrl()}/backup/exports`,
         body: {
           contents: {
@@ -514,9 +458,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           },
           encryption: {
             enabled: this.encryptionEnabled,
-            public_key: this.encryptionUseExternal
-              ? this.externalPublicKey.trim()
-              : null,
+            public_key: this.encryptionUseExternal ? this.externalPublicKey.trim() : null,
           },
           // Empty string = "same as source"; the backend treats null
           // and "" identically so this carries the user's choice
@@ -527,9 +469,9 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       });
 
       this.jobId = res.job_id;
-      this.stage = "progress";
+      this.stage = 'progress';
       this.status = {
-        phase: res.phase as ExportProgress["phase"],
+        phase: res.phase as ExportProgress['phase'],
         message: res.message,
         progress: {
           total_bytes: 0,
@@ -544,10 +486,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       this.pump();
     } catch (e) {
       this.starting = false;
-      app.alerts.show(
-        { type: "error" },
-        errorDetail(e, String(trans("start_failed"))),
-      );
+      app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('start_failed'))));
       m.redraw();
     }
   }
@@ -557,15 +496,10 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     this.polling = true;
     try {
       // Sequential ticks — each /tick call performs ~4MB of work.
-      while (
-        this.jobId &&
-        this.status &&
-        this.status.phase !== "done" &&
-        this.status.phase !== "error"
-      ) {
+      while (this.jobId && this.status && this.status.phase !== 'done' && this.status.phase !== 'error') {
         try {
           const res = await apiRequest<ExportProgress>({
-            method: "POST",
+            method: 'POST',
             url: `${apiUrl()}/backup/exports/${this.jobId}/tick`,
             surface: false,
           });
@@ -575,18 +509,18 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           // Convert tick failures into a synthetic error phase so the
           // existing UI shows the close button and a meaningful
           // message instead of freezing on the last %.
-          const detail = errorDetail(e, String(trans("phase_error_network")));
+          const detail = errorDetail(e, String(trans('phase_error_network')));
           this.status = {
             ...(this.status as ExportProgress),
-            phase: "error",
+            phase: 'error',
             message: detail,
           };
           m.redraw();
           break;
         }
       }
-      if (this.status?.phase === "done") {
-        app.alerts.show({ type: "success" }, trans("completed"));
+      if (this.status?.phase === 'done') {
+        app.alerts.show({ type: 'success' }, trans('completed'));
         this.attrs.onComplete();
       }
     } finally {
@@ -598,15 +532,15 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     if (!this.jobId) return;
     try {
       await apiRequest({
-        method: "DELETE",
+        method: 'DELETE',
         url: `${apiUrl()}/backup/exports/${this.jobId}`,
         surface: false,
       });
     } catch (e) {
       // The job may still be holding a server-side lock — let the user
       // know so they understand if the next export complains.
-      console.warn("[backup] export cancel failed", e);
-      app.alerts.show({ type: "warning" }, trans("cancel_failed_warn"));
+      console.warn('[backup] export cancel failed', e);
+      app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }
     this.close();
   }

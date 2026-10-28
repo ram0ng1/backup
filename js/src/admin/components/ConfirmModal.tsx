@@ -1,7 +1,7 @@
-import app from "flarum/admin/app";
-import Modal, { IInternalModalAttrs } from "flarum/common/components/Modal";
-import Button from "flarum/common/components/Button";
-import type Mithril from "mithril";
+import app from 'flarum/admin/app';
+import Modal, { IInternalModalAttrs } from 'flarum/common/components/Modal';
+import Button from 'flarum/common/components/Button';
+import type Mithril from 'mithril';
 
 export interface ConfirmModalAttrs extends IInternalModalAttrs {
   title: Mithril.Children;
@@ -26,7 +26,7 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   protected resolved = false;
 
   className() {
-    return "BackupConfirmModal Modal--small";
+    return 'BackupConfirmModal Modal--small';
   }
 
   title() {
@@ -34,24 +34,14 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   }
 
   content() {
-    const confirmLabel =
-      this.attrs.confirmLabel ??
-      app.translator.trans("ramon-backup.admin.errors.confirm_default");
-    const cancelLabel =
-      this.attrs.cancelLabel ??
-      app.translator.trans("ramon-backup.admin.errors.cancel_default");
+    const confirmLabel = this.attrs.confirmLabel ?? app.translator.trans('ramon-backup.admin.errors.confirm_default');
+    const cancelLabel = this.attrs.cancelLabel ?? app.translator.trans('ramon-backup.admin.errors.cancel_default');
 
     return (
       <div className="Modal-body">
         <div className="BackupConfirmModal-body">{this.attrs.body}</div>
         <div className="Form-group BackupConfirmModal-actions">
-          <Button
-            className={
-              "Button " +
-              (this.attrs.danger ? "Button--danger" : "Button--primary")
-            }
-            onclick={() => this.decide(true)}
-          >
+          <Button className={'Button ' + (this.attrs.danger ? 'Button--danger' : 'Button--primary')} onclick={() => this.decide(true)}>
             {confirmLabel}
           </Button>
           <Button className="Button" onclick={() => this.decide(false)}>
@@ -82,12 +72,7 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
 }
 
 /** Promise wrapper so callers can `await confirmAsync(...)`. */
-export function confirmAsync(
-  attrs: Omit<
-    ConfirmModalAttrs,
-    "onConfirm" | "onCancel" | keyof IInternalModalAttrs
-  >,
-): Promise<boolean> {
+export function confirmAsync(attrs: Omit<ConfirmModalAttrs, 'onConfirm' | 'onCancel' | keyof IInternalModalAttrs>): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const settle = (v: boolean) => {
