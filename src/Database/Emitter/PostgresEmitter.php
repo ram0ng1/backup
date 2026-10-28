@@ -98,6 +98,23 @@ class PostgresEmitter extends AbstractEmitter
         return ' CASCADE';
     }
 
+    /**
+     * No PostgreSQL o literal partido precisa continuar um literal só (sem
+     * tipo), senão `'a' || 'b'` vira `text` e o INSERT numa coluna jsonb
+     * falha. A string de escape `E'…'` resolve: o `E` de `END` sai como o
+     * octal `\105` e o separador some do texto do dump.
+     */
+    protected function quoteString(string $value): string
+    {
+        if (! str_contains($value, '@@END@@')) {
+            return $this->quoteLiteral($value);
+        }
+
+        $escaped = str_replace(['\\', "'"], ['\\\\', "''"], $value);
+
+        return "E'" . str_replace('@@END@@', '@@\\105ND@@', $escaped) . "'";
+    }
+
     public function targetTag(): string
     {
         return Dialect::POSTGRES->value;

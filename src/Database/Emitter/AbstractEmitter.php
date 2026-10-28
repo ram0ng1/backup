@@ -82,6 +82,44 @@ abstract class AbstractEmitter implements SqlEmitter
      */
     protected function quoteString(string $value): string
     {
+        $parts = $this->splitAtDelimiter($value);
+        if (count($parts) === 1) {
+            return $this->quoteLiteral($value);
+        }
+
+        return $this->joinLiterals(array_map(fn (string $part) => $this->quoteLiteral($part), $parts));
+    }
+
+    protected function quoteLiteral(string $value): string
+    {
         return "'" . str_replace("'", "''", $value) . "'";
+    }
+
+    /**
+     * Concatena literais já quotados. O padrão (`||` entre parênteses) vale
+     * em VALUES e em DEFAULT no SQLite.
+     *
+     * @param list<string> $literals
+     */
+    protected function joinLiterals(array $literals): string
+    {
+        return '(' . implode(' || ', $literals) . ')';
+    }
+
+    /**
+     * O restorer separa statements pela linha `-- @@END@@`, sem olhar aspas.
+     * Um valor que contém esse texto (um post com bloco de código, o motivo
+     * de uma denúncia) quebraria o INSERT no meio do literal; partindo o
+     * literal entre `@@` e `END@@`, o separador nunca aparece contíguo.
+     *
+     * @return list<string>
+     */
+    protected function splitAtDelimiter(string $value): array
+    {
+        if (! str_contains($value, '@@END@@')) {
+            return [$value];
+        }
+
+        return preg_split('/(?<=@@)(?=END@@)/', $value) ?: [$value];
     }
 }

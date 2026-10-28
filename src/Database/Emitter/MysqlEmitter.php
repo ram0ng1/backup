@@ -36,9 +36,20 @@ class MysqlEmitter extends AbstractEmitter
      * PostgreSQL and SQLite take the literal as-is, which is why only
      * this emitter overrides the base behaviour.
      */
-    protected function quoteString(string $value): string
+    protected function quoteLiteral(string $value): string
     {
         return "'" . str_replace(['\\', "'"], ['\\\\', "''"], $value) . "'";
+    }
+
+    /**
+     * Literais lado a lado viram um só no MySQL/MariaDB (`'a' 'b'` = `'ab'`),
+     * em qualquer contexto: VALUES, DEFAULT, COMMENT, ENUM.
+     *
+     * @param list<string> $literals
+     */
+    protected function joinLiterals(array $literals): string
+    {
+        return implode(' ', $literals);
     }
 
     public function targetTag(): string
