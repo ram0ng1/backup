@@ -21,4 +21,14 @@ trait AdminOnlyController
             throw new PermissionDeniedException();
         }
     }
+
+    /**
+     * Restaurar troca o banco inteiro, inclusive quem é admin, e a chave
+     * gerada decide quem consegue ler os backups cifrados: nada disso pode
+     * ficar ao alcance de um grupo que só recebeu `backup.manage`.
+     */
+    protected function assertAdmin(ServerRequestInterface $request): void
+    {
+        RequestUtil::getActor($request)->assertAdmin();
+    }
 }

@@ -9,7 +9,7 @@ ramon-backup:
       cancel_default: "Cancelar"
 
     permissions:
-      manage_label: "Gerenciar backups"
+      manage_label: "Criar e baixar backups (cópia completa do banco)"
 
     panel:
       actions_title: "Backup e migração"

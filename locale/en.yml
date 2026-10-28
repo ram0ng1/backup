@@ -9,7 +9,7 @@ ramon-backup:
       cancel_default: "Cancel"
 
     permissions:
-      manage_label: "Manage backups"
+      manage_label: "Create and download backups (full database copies)"
 
     panel:
       actions_title: "Backup & migration"

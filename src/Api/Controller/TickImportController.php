@@ -29,7 +29,7 @@ class TickImportController implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $id)) {

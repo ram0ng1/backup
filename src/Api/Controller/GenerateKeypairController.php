@@ -34,7 +34,7 @@ class GenerateKeypairController implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         if (! $this->cipher->isAvailable()) {
             throw new ValidationException(['encryption' => 'libsodium is not available on this server.']);

@@ -29,7 +29,7 @@ class StartImportController implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
         $actor = RequestUtil::getActor($request);
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');

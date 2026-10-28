@@ -43,7 +43,7 @@ class ChunkImportController implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         $jobId = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $jobId)) {

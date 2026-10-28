@@ -62,7 +62,7 @@ class UploadImportController implements RequestHandlerInterface
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->assertCanManage($request);
+        $this->assertAdmin($request);
 
         $body = (array) $request->getParsedBody();
 
