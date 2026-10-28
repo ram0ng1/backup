@@ -648,6 +648,9 @@ class ExportJob
 
         try {
             $budgetLeft = self::BUDGET_BYTES;
+            // Lido uma vez por tick: dentro do laço o NDJSON inteiro era
+            // decodificado de novo a cada arquivo.
+            $manifest = null;
 
             while ($budgetLeft > 0 && $cursor['bundle_step'] !== 'done') {
                 if ($cursor['bundle_step'] === 'init') {
@@ -677,7 +680,7 @@ class ExportJob
                 }
 
                 if ($cursor['bundle_step'] === 'files') {
-                    $manifest = $this->loadManifest($paths['manifest']);
+                    $manifest ??= $this->loadManifest($paths['manifest']);
                     if ($cursor['file_idx'] >= count($manifest)) {
                         $cursor['bundle_step'] = 'trailer';
                         continue;
