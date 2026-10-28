@@ -103,6 +103,15 @@ class JobState
         return $decoded === false ? null : $decoded;
     }
 
+    /**
+     * Apaga os blobs binários. O estado do secretstream decifra o resto do
+     * arquivo, então ele sai do job.json assim que o job termina.
+     */
+    public function forgetBinary(): void
+    {
+        unset($this->data['binary']);
+    }
+
     public function file(): string
     {
         return $this->file;

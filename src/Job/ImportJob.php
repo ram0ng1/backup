@@ -226,6 +226,10 @@ class ImportJob
                 default     => throw new RuntimeException("Unknown phase: $phase"),
             };
         } catch (Throwable $e) {
+            // Job com erro não continua: o dump em claro e o estado de
+            // criptografia não servem para mais nada e não ficam no disco.
+            @unlink((string) ($state->get('paths')['dump'] ?? ''));
+            $state->forgetBinary();
             $state->set('phase', 'error');
             $state->set('message', 'Error: '.$e->getMessage());
             $state->save();
@@ -1234,6 +1238,7 @@ class ImportJob
          * o operador precisa agir antes de recarregar, e nos dois a tela
          * de sucesso limpo seria mentira.
          */
+        $state->forgetBinary();
         $state->set('incomplete', $unresolved > 0 || $unwritable > 0 || $dangling !== []);
         $state->set('phase', 'done');
         $state->set('message', match (true) {

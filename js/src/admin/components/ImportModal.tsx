@@ -824,6 +824,12 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   close() {
+    // Com o banco restaurado a sessão deste admin já não existe; o
+    // diretório fica para a limpeza diária.
+    const finished = this.status?.phase === 'error' || (this.status?.phase === 'done' && !this.sectionDb);
+    if (this.inspect && finished) {
+      apiRequest({ method: 'DELETE', url: `${apiUrl()}/backup/imports/${this.inspect.job_id}`, surface: false }).catch(() => {});
+    }
     this.hide();
   }
 }

@@ -541,13 +541,19 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     } catch (e) {
       // The job may still be holding a server-side lock — let the user
       // know so they understand if the next export complains.
-      console.warn('[backup] export cancel failed', e);
+      console.warn('[backup] export cancel failed', errorDetail(e));
       app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }
     this.close();
   }
 
   close() {
+    // Job encerrado: o diretório dele só serve para este modal ler o
+    // status final, então sai junto com o modal.
+    const finished = this.status?.phase === 'done' || this.status?.phase === 'error';
+    if (this.jobId && finished) {
+      apiRequest({ method: 'DELETE', url: `${apiUrl()}/backup/exports/${this.jobId}`, surface: false }).catch(() => {});
+    }
     this.jobId = null;
     this.hide();
   }

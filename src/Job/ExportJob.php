@@ -225,6 +225,11 @@ class ExportJob
                 default    => throw new RuntimeException("Unknown phase: $phase"),
             };
         } catch (Throwable $e) {
+            // Job com erro não continua: o dump em claro e o estado de
+            // criptografia não servem para mais nada e não ficam no disco.
+            @unlink((string) ($state->get('paths')['dump'] ?? ''));
+            @unlink((string) ($state->get('paths')['archive'] ?? ''));
+            $state->forgetBinary();
             $state->set('phase', 'error');
             $state->set('message', 'Error: '.$e->getMessage());
             $state->save();
@@ -816,6 +821,7 @@ class ExportJob
         @unlink($paths['dump']);
         @unlink($paths['manifest']);
 
+        $state->forgetBinary();
         $state->set('phase', 'done');
         $state->set('message', 'Backup complete.');
         $state->set('result', [
