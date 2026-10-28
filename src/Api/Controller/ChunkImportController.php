@@ -115,7 +115,7 @@ class ChunkImportController implements RequestHandlerInterface
                         ),
                     ]);
                 }
-                if ($expected > 0 && $offset + $written > $expected) {
+                if ($offset + $written > $expected) {
                     throw new ValidationException([
                         'chunk' => 'Chunk would write past the declared upload size.',
                     ]);
