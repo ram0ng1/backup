@@ -7,6 +7,7 @@ use Laminas\Diactoros\Response\JsonResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Archive\ArchiveMeta;
 use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\StoragePaths;
@@ -91,7 +92,7 @@ class InspectImportController implements RequestHandlerInterface
         return new JsonResponse([
             'job_id'       => $jobId,
             'is_encrypted' => $isEncrypted,
-            'meta'         => $archiveMeta,
+            'meta'         => ArchiveMeta::forDisplay($archiveMeta),
             'size'         => $actual,
             'advisories'   => StackSnapshot::advisories($archiveMeta),
         ]);
