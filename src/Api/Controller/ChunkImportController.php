@@ -69,6 +69,13 @@ class ChunkImportController implements RequestHandlerInterface
         }
 
         $expected = (int) ($meta['expected_size'] ?? 0);
+        // Sem tamanho declarado não há limite; e o preenchimento com zeros
+        // abaixo grava bytes reais até o offset, antes de ler o corpo.
+        if ($expected <= 0 || $offset >= $expected) {
+            throw new ValidationException([
+                'chunk' => 'Chunk offset is outside the declared upload size.',
+            ]);
+        }
 
         // Stream the request body straight to disk in fixed-size
         // reads so we never hold more than 64 KB of the chunk in
@@ -125,6 +132,7 @@ class ChunkImportController implements RequestHandlerInterface
             fclose($fh);
         }
 
+        clearstatcache(true, $dest);
         $received = filesize($dest) ?: 0;
         return new JsonResponse([
             'received' => $received,
