@@ -1,6 +1,6 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+namespace Ramon\Backup\Tests\transfer;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;

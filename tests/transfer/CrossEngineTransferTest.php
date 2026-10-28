@@ -1,7 +1,8 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+namespace Ramon\Backup\Tests\transfer;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Tests\Support\Engines;
 use Ramon\Backup\Tests\Support\Fixture;
@@ -26,9 +27,7 @@ use Ramon\Backup\Tests\Support\Transfer;
  */
 final class CrossEngineTransferTest extends TestCase
 {
-    /**
-     * @dataProvider directionProvider
-     */
+    #[DataProvider('directionProvider')]
     public function test_transfer_preserves_data(string $sourceDialect, string $targetDialect): void
     {
         $source = Engines::connection($sourceDialect);
@@ -93,9 +92,8 @@ final class CrossEngineTransferTest extends TestCase
      * parent trips MySQL's FK column-type check (error 3780), or fails
      * to drop a referenced parent on PostgreSQL. The up-front drop-all
      * (DatabaseDumper::dropAllTables) is what makes this safe.
-     *
-     * @dataProvider serverEngineProvider
      */
+    #[DataProvider('serverEngineProvider')]
     public function test_reimport_over_incompatible_prior_state(string $target): void
     {
         $dest   = Engines::connection($target);

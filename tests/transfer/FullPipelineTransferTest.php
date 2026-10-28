@@ -1,12 +1,13 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+namespace Ramon\Backup\Tests\transfer;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Schema\Blueprint;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Extensions\Inventory;
@@ -64,9 +65,7 @@ final class FullPipelineTransferTest extends TestCase
         $this->rrmdir($this->workdir);
     }
 
-    /**
-     * @dataProvider directionProvider
-     */
+    #[DataProvider('directionProvider')]
     public function test_full_pipeline_transfer(string $sourceDialect, string $targetDialect): void
     {
         $source = Engines::connection($sourceDialect);

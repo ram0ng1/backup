@@ -1,9 +1,10 @@
 <?php
 
-namespace Ramon\Backup\Tests\Unit;
+namespace Ramon\Backup\Tests\unit;
 
 use Illuminate\Database\Connection;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Database\Dialect;
 use RuntimeException;
@@ -75,9 +76,7 @@ final class DialectTest extends TestCase
         Dialect::detect($db);
     }
 
-    /**
-     * @dataProvider parseProvider
-     */
+    #[DataProvider('parseProvider')]
     public function test_parse_accepts_friendly_aliases(string $input, Dialect $expected): void
     {
         $this->assertSame($expected, Dialect::parse($input));

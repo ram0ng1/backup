@@ -1,6 +1,6 @@
 <?php
 
-namespace Ramon\Backup\Tests\Unit;
+namespace Ramon\Backup\Tests\unit;
 
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Environment\StackSnapshot;

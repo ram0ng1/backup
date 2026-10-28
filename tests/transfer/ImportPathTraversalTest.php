@@ -1,11 +1,12 @@
 <?php
 
-namespace Ramon\Backup\Tests\Integration;
+namespace Ramon\Backup\Tests\transfer;
 
 use Flarum\Foundation\Config;
 use Flarum\Foundation\Paths;
 use Illuminate\Database\Connection;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Job\ImportJob;
@@ -91,7 +92,7 @@ final class ImportPathTraversalTest extends TestCase
         return $this->resolve->invoke($this->job, $name, $state ?? $this->state());
     }
 
-    /** @dataProvider traversalProvider */
+    #[DataProvider('traversalProvider')]
     public function test_resolveDestination_rejects_escapes(string $name): void
     {
         $this->assertNull($this->resolve($name), "Should refuse to resolve: $name");
