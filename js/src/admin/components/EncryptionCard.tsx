@@ -146,8 +146,8 @@ class RegenerateConfirmModal extends Modal<RegenerateAttrs> {
       // terminava e o modal da chave nova não fechava mais.
       await this.attrs.onConfirm();
     } catch {
-      // Parent already showed an error toast — keep the modal open so
-      // the user can retry without re-acknowledging the warning.
+      // O pai já mostrou o toast de erro; o modal fica aberto para tentar de
+      // novo sem confirmar o aviso outra vez.
       this.submitting = false;
       m.redraw();
     }

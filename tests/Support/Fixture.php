@@ -15,33 +15,31 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\Schema\Blueprint;
 
 /**
- * A small, deliberately gnarly two-table fixture used by every transfer
- * test. It exercises the column shapes and value edge-cases most likely
- * to break a cross-engine dump/restore:
+ * Fixture de duas tabelas, propositalmente chata, usada por todos os
+ * testes de transferência. Cobre o que mais quebra um dump entre motores:
  *
- *   - auto-increment integer primary keys (MySQL AUTO_INCREMENT vs PG
- *     serial/identity vs SQLite rowid)
- *   - an unsigned FK column + a real FOREIGN KEY between the two tables
+ *   - PK auto-increment (AUTO_INCREMENT do MySQL, serial/identity do PG,
+ *     rowid do SQLite)
+ *   - coluna FK unsigned + FOREIGN KEY real entre as tabelas
  *   - boolean (tinyint(1) ↔ boolean ↔ integer)
- *   - nullable columns (NULL must survive, not become '')
- *   - negative and zero integers
- *   - nullable TIMESTAMP
- *   - strings with single quotes, commas, newlines, accented characters
- *     and a 4-byte emoji (utf8mb4 / UTF-8 round-trip)
+ *   - colunas nullable (NULL tem que continuar NULL, não '')
+ *   - inteiros negativos e zero
+ *   - TIMESTAMP nullable
+ *   - strings com aspas simples, vírgulas, quebras de linha, acentos e um
+ *     emoji de 4 bytes (utf8mb4 / UTF-8)
  *
- * The schema is declared once with Laravel's Blueprint so each engine
- * gets idiomatic DDL; the dumper then re-derives it by introspection.
+ * O schema é declarado uma vez com o Blueprint, para cada motor receber
+ * DDL nativo; o dumper o reconstrói por introspecção.
  */
 final class Fixture
 {
-    /** Drop order (children first) — used when resetting. */
+    /** Ordem de DROP (filhas primeiro). */
     public const TABLES = ['bkp_posts', 'bkp_authors'];
 
     /**
-     * Drop the fixture tables in child-first order. Used to give a
-     * transfer target a clean slate between directions so a leftover
-     * child table (e.g. with a differently-signed FK column from a
-     * previous engine's dump) can't trip the next CREATE.
+     * Apaga as tabelas da fixture, filhas primeiro. Uma filha que sobrasse
+     * (com a FK de outro sinal, vinda do dump de outro motor) quebraria o
+     * próximo CREATE.
      */
     public static function reset(Connection $db): void
     {
@@ -55,12 +53,10 @@ final class Fixture
     {
         $schema = $db->getSchemaBuilder();
 
-        // Full wipe first: several test classes share the same physical
-        // databases (one per engine), and the transfer tests dump the
-        // WHOLE database — so any table left behind by another test
-        // (e.g. a `backups` registry table) would leak into the dump.
-        // Starting from an empty schema keeps every direction isolated
-        // and deterministic regardless of execution order.
+        // Limpeza total primeiro: as classes de teste dividem o mesmo banco por
+        // motor e os testes de transferência fazem dump do banco INTEIRO, então
+        // qualquer tabela deixada por outro teste (ex.: `backups`) entraria no
+        // dump.
         $schema->dropAllTables();
 
         $schema->create('bkp_authors', function (Blueprint $t) {
@@ -98,9 +94,9 @@ final class Fixture
     }
 
     /**
-     * Read both tables back into a normalised, engine-agnostic shape so
-     * two snapshots can be compared with assertEquals regardless of how
-     * a given engine renders booleans, timestamps or numeric strings.
+     * Lê as duas tabelas num formato neutro, para comparar snapshots com
+     * assertEquals sem depender de como cada motor devolve booleanos, datas
+     * ou números em string.
      *
      * @return array{authors: list<array<string,mixed>>, posts: list<array<string,mixed>>}
      */
@@ -142,9 +138,8 @@ final class Fixture
     }
 
     /**
-     * Collapse the various engine timestamp renderings (with/without
-     * fractional seconds, with/without timezone suffix) to a single
-     * `Y-m-d H:i:s` string. NULL stays NULL.
+     * Reduz as várias formas de timestamp dos motores (com ou sem fração de
+     * segundo e fuso) a `Y-m-d H:i:s`. NULL continua NULL.
      */
     private static function normalizeTimestamp(mixed $v): ?string
     {

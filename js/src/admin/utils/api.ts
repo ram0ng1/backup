@@ -1,7 +1,7 @@
 import app from 'flarum/admin/app';
 import type { FlarumRequestOptions } from 'flarum/common/Application';
 
-/** Trim trailing slashes off the configured API URL. */
+/** Remove as barras finais da URL da API configurada. */
 export function apiUrl(): string {
   return (app.forum.attribute<string>('apiUrl') || '/api').replace(/\/+$/, '');
 }
@@ -18,7 +18,7 @@ export function fmtBytes(bytes: number): string {
   return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + ' ' + units[i];
 }
 
-/** Best-effort extraction of a human-readable detail from a RequestError or thrown object. */
+/** Extrai, se der, um detalhe legível de um RequestError ou objeto lançado. */
 export function errorDetail(raw: any, fallback?: string): string {
   const detail = raw?.response?.errors?.[0]?.detail ?? raw?.detail ?? (typeof raw?.message === 'string' ? raw.message : undefined);
   if (detail) return String(detail);
@@ -27,18 +27,15 @@ export function errorDetail(raw: any, fallback?: string): string {
 }
 
 export interface ApiRequestOptions<T> extends FlarumRequestOptions<T> {
-  /** When false, suppress the auto toast — caller will surface the error itself. */
+  /** Se false, não mostra o toast; o chamador exibe o erro. */
   surface?: boolean;
-  /** Fallback message used by surface and re-thrown to callers as `.detail`. */
+  /** Mensagem de fallback, mostrada no toast e repassada como `.detail`. */
   fallbackMessage?: string;
 }
 
 /**
- * Wrapper around `app.request` that:
- *   - logs every failure to console.error with action + URL;
- *   - extracts the JSON:API error detail when present;
- *   - shows a Flarum alert (unless `surface: false`);
- *   - rethrows so the caller can still branch on the failure.
+ * Envolve o `app.request`: registra a falha no console, extrai o detalhe
+ * JSON:API, mostra um alerta (salvo `surface: false`) e relança o erro.
  *
  * O `errorHandler` vazio desliga o alerta padrão do Flarum: quem mostra
  * o erro é este wrapper (ou o chamador, com `surface: false`), senão
@@ -63,7 +60,7 @@ export async function apiRequest<T>(opts: ApiRequestOptions<T>): Promise<T> {
       try {
         raw.detail = detail;
       } catch {
-        /* read-only, ignore */
+        /* somente leitura, ignora */
       }
     }
     throw raw;

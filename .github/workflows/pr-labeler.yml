@@ -4,10 +4,10 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
 
-# 🔴 C1 — Default-deny no nível do workflow.
+# Nega tudo ao GITHUB_TOKEN por padrão; o job declara o que precisa.
 permissions: {}
 
-# Evita stacking quando um PR é sincronizado várias vezes em sequência.
+# Um PR sincronizado várias vezes seguidas não empilha execuções.
 concurrency:
   group: pr-labeler-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -20,7 +20,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      # 🟠 I3 — Harden-runner: job aplica labels via GITHUB_TOKEN.
+      # O job aplica labels com o GITHUB_TOKEN.
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:

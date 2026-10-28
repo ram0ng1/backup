@@ -24,13 +24,13 @@ use Ramon\Backup\StoragePaths;
 use ReflectionMethod;
 
 /**
- * §13.9 regression guard for the archive-extraction path. A `.flarum`
- * archive is, by design, restored from an untrusted/foreign source, so
- * the entry-name → absolute-path resolver must refuse anything that
- * escapes the whitelisted roots (assets/, storage/, a known extension
- * dir, project/composer.{json,lock}). Covers literal traversal, encoded
- * variants, absolute paths, backslashes, NUL, a hostile manifest
- * `relative`, and (best-effort) a symlinked component.
+ * Resolução de caminhos na extração. Um `.flarum` vem, por definição, de
+ * fonte externa, então o resolvedor de nome de entrada → caminho absoluto
+ * recusa tudo o que sair das raízes permitidas (assets/, storage/, o
+ * diretório de uma extensão conhecida, project/composer.{json,lock}).
+ * Cobre traversal literal, variantes codificadas, caminhos absolutos,
+ * barras invertidas, NUL, `relative` hostil no manifesto e, quando dá,
+ * um componente que é symlink.
  */
 final class ImportPathTraversalTest extends TestCase
 {
@@ -59,8 +59,8 @@ final class ImportPathTraversalTest extends TestCase
         $settings->shouldReceive('get')->andReturn('');
         $cipher = new BackupCipher($settings, $config);
 
-        // resolveDestination never touches the DB, so a bare mock that
-        // satisfies the (narrowed) Connection type is enough.
+        // resolveDestination não toca no banco; um mock que satisfaça o tipo
+        // Connection basta.
         $db = Mockery::mock(Connection::class);
 
         $this->job = new ImportJob(
@@ -73,8 +73,8 @@ final class ImportPathTraversalTest extends TestCase
             new \Ramon\Backup\Settings\SettingsPreserver($settings)
         );
 
-        // PHP 8.1+ reflection reaches private methods without
-        // setAccessible() (which is a deprecated no-op since 8.5).
+        // Desde o PHP 8.1 a reflection alcança métodos privados sem
+        // setAccessible(), que virou no-op deprecated no 8.5.
         $this->resolve = new ReflectionMethod($this->job, 'resolveDestination');
         $this->extMap = new ReflectionMethod($this->job, 'extensionDestinationMap');
     }
@@ -171,13 +171,13 @@ final class ImportPathTraversalTest extends TestCase
 
         $map = $this->extMap->invoke($this->job, $state);
 
-        // Hostile entries are dropped entirely.
+        // Entradas hostis são descartadas.
         $this->assertArrayNotHasKey('evil-parent', $map);
         $this->assertArrayNotHasKey('evil-abs', $map);
         $this->assertArrayNotHasKey('evil-bslash', $map);
         $this->assertArrayNotHasKey('evil-dot', $map);
 
-        // Legitimate layouts are kept and stay under the install base.
+        // Layouts legítimos ficam, dentro da base da instalação.
         $this->assertArrayHasKey('good-wb', $map);
         $this->assertArrayHasKey('good-vendor', $map);
         $this->assertStringStartsWith($this->workdir, $map['good-wb']);
@@ -195,9 +195,8 @@ final class ImportPathTraversalTest extends TestCase
             $this->markTestSkipped('Cannot create symlinks in this environment');
         }
 
-        // "storage/link/evil" has no literal traversal, but `link` is a
-        // symlink out of the install — the realpath confinement must
-        // still refuse it.
+        // "storage/link/evil" não tem traversal literal, mas `link` é symlink
+        // para fora da instalação: o confinamento por realpath tem que recusar.
         $resolved = $this->resolve('storage/link/evil.txt');
 
         @unlink($link);

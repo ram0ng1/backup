@@ -15,10 +15,9 @@ export interface BackupRow {
   flarum_version: string | null;
   php_version: string | null;
   /**
-   * Engine the SQL dump targets. NULL = same as source (a regular
-   * backup of this install). Anything else (mysql, mariadb, postgres,
-   * sqlite) means the dump was retargeted at export time and is
-   * expected to be restored onto that engine.
+   * Motor para o qual o dump foi gerado. NULL = o mesmo da origem (backup
+   * comum desta instalação); outro valor indica dump convertido na
+   * exportação, para restaurar naquele motor.
    */
   target_dialect: string | null;
   created_at: string | null;
@@ -66,9 +65,7 @@ export default class BackupList extends Component<BackupListAttrs> {
                 <div className="BackupList-when">{b.created_at ? humanTime(new Date(b.created_at)) : '—'}</div>
                 <div className="BackupList-filename">{b.filename}</div>
                 {b.target_dialect && (
-                  // Only shown when the admin retargeted the dump at
-                  // export time — same-engine backups have a NULL
-                  // target_dialect and don't need the visual noise.
+                  // Só aparece quando o dump foi convertido para outro motor.
                   <div
                     className={`BackupList-target BackupList-target--${b.target_dialect}`}
                     title={String(

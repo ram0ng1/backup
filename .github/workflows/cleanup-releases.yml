@@ -3,10 +3,10 @@ name: Limpar Releases Antigas
 on:
   workflow_dispatch:
 
-# 🔴 C1 — Default-deny no nível do workflow.
+# Nega tudo ao GITHUB_TOKEN por padrão; o job declara o que precisa.
 permissions: {}
 
-# 🟠 I4 — Serializa para evitar duas limpezas concorrentes deletando o mesmo conjunto.
+# Serializado: duas limpezas ao mesmo tempo apagariam o mesmo conjunto.
 concurrency:
   group: cleanup-releases
   cancel-in-progress: false
@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      # 🟠 I3 — Harden-runner: job usa GITHUB_TOKEN com contents:write.
+      # O job usa o GITHUB_TOKEN com contents:write.
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:

@@ -37,11 +37,8 @@ interface ExportProgress {
     size: number;
   };
   /**
-   * Per-column notes from the introspector about lossy translations:
-   * unsupported types coerced to TEXT/BLOB, generated columns whose
-   * expressions can't be replicated cross-engine, etc. Backend always
-   * returns an array (possibly empty); the UI shows them only when
-   * non-empty.
+   * Avisos do introspector sobre conversões com perda: tipos sem suporte
+   * viram TEXT/BLOB, colunas geradas não se replicam entre motores etc.
    */
   warnings?: string[];
 }
@@ -49,16 +46,11 @@ interface ExportProgress {
 const trans = (key: string, params?: Record<string, unknown>) => app.translator.trans(`ramon-backup.admin.export_modal.${key}`, params ?? {});
 
 /**
- * Two-stage modal:
+ * Modal em dois estágios: o formulário (o que incluir e se criptografa) e
+ * o progresso, que avança por ticks até phase=done ou phase=error.
  *
- *   1. Form     — admin picks what to include and whether to encrypt.
- *   2. Progress — chunked-tick polling drives a progress bar until the
- *                 server reports phase=done (or phase=error).
- *
- * The "encryption to a foreign key" path lets the operator paste a
- * public key from another Flarum install — useful when preparing an
- * archive for transfer to a different server whose keypair is not the
- * one in *this* config.php.
+ * A criptografia aceita a chave pública de outra instalação, para preparar
+ * um arquivo que será restaurado num servidor com outro par de chaves.
  */
 export default class ExportModal extends Modal<ExportModalAttrs> {
   protected stage: 'form' | 'progress' = 'form';
@@ -68,9 +60,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   protected includeStorage = false;
   protected includeExtensions = false;
 
-  // Per-extension selection. Loaded lazily when the user ticks
-  // "Extensions" for the first time so we don't fire an extra request
-  // for admins who never use the feature.
+  // Carregada só quando marcam "Extensões" pela primeira vez, para não
+  // gastar uma requisição com quem nunca usa.
   protected extensionsLoading = false;
   protected extensionsLoaded = false;
   protected extensionsFailed = false;
@@ -81,11 +72,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   protected encryptionUseExternal = false;
   protected externalPublicKey = '';
 
-  // Target engine the dump should be generated for. Empty string =
-  // "same as source" (the most common case — backing up to restore
-  // onto the same install / a clone of it). The non-empty values
-  // make this a cross-engine migration: e.g. dump from MySQL,
-  // restore onto Postgres.
+  // Motor de destino do dump. Vazio = o mesmo da origem; outro valor
+  // converte o dump (ex.: de MySQL para PostgreSQL).
   protected targetDialect: '' | 'mysql' | 'mariadb' | 'postgres' | 'sqlite' = '';
 
   protected starting = false;
@@ -106,7 +94,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     return this.progressContent();
   }
 
-  // ────────────────────────────────────────── form
+  // ────────────────────────────────────────── formulário
 
   formContent() {
     return (
@@ -136,9 +124,6 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             () => this.includeExtensions,
             (v) => {
               this.includeExtensions = v;
-              // Lazy-load the extension inventory the first time
-              // someone ticks the box. The list comes back fast (no
-              // disk walking — just metadata from the ExtensionManager).
               if (v && !this.extensionsLoaded) this.loadExtensions();
             }
           )}
@@ -269,9 +254,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         </div>
 
         {/*
-          Filter out empty groups before mapping — Mithril rejects
-          mixed `[vnode-with-key, null, vnode-with-key]` arrays
-          ("In fragments, vnodes must either all have keys or none").
+          Remove os grupos vazios antes do map: o Mithril recusa fragmentos que
+          misturam vnodes com key e null.
         */}
         {(['workbench', 'vendor', 'unknown'] as const)
           .filter((loc) => groups[loc].length > 0)
@@ -314,8 +298,6 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       });
       this.extensions = res.extensions || [];
       this.extensionsLoaded = true;
-      // Default: every extension ticked. The admin un-ticks the
-      // ones they don't want.
       for (const ext of this.extensions) this.extensionSelected[ext.id] = true;
     } catch (e) {
       this.extensionsFailed = true;
@@ -352,7 +334,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     return true;
   }
 
-  // ────────────────────────────────────────── progress
+  // ────────────────────────────────────────── progresso
 
   progressContent() {
     const s = this.status;
@@ -398,12 +380,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         )}
 
         {/*
-          Cross-engine translation notes. The backend always returns
-          an array — show the block only when it has entries so a
-          clean same-engine backup doesn't get a noisy "no warnings"
-          panel. Surfaced as soon as they appear (not gated on
-          phase=done) so the admin sees them while watching the
-          progress bar, not after the modal closes.
+          Avisos de conversão entre motores. Aparecem assim que chegam, sem
+          esperar phase=done, para o admin vê-los durante o progresso.
         */}
         {(s.warnings?.length ?? 0) > 0 && (
           <div className="BackupExport-warnings" role="alert">
@@ -435,16 +413,13 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     );
   }
 
-  // ────────────────────────────────────────── api calls
+  // ────────────────────────────────────────── chamadas à API
 
   async start() {
     this.starting = true;
     try {
-      // The backend accepts `extensions` as bool OR string[]. When
-      // every box is checked we still send the array (explicit),
-      // unless the inventory hasn't even loaded yet — which means
-      // the admin ticked the section but never opened the list and
-      // implicitly wants "all".
+      // O backend aceita `extensions` como bool ou string[]. Com a lista
+      // carregada vai o array; sem ela, `true` ("todas").
       let extensionsField: boolean | string[] = false;
       if (this.includeExtensions) {
         if (!this.extensionsLoaded) {
@@ -475,9 +450,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
             enabled: this.encryptionEnabled,
             public_key: this.encryptionUseExternal ? this.externalPublicKey.trim() : null,
           },
-          // Empty string = "same as source"; the backend treats null
-          // and "" identically so this carries the user's choice
-          // through unambiguously.
+          // Vazio = o mesmo motor da origem; o backend trata null e "" igual.
           target_dialect: this.targetDialect || null,
         },
         surface: false,
@@ -510,7 +483,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
     if (this.polling || !this.jobId) return;
     this.polling = true;
     try {
-      // Sequential ticks — each /tick call performs ~4MB of work.
+      // Ticks em sequência; cada /tick processa uns 4MB.
       while (this.jobId && this.status && this.status.phase !== 'done' && this.status.phase !== 'error') {
         try {
           const res = await apiRequest<ExportProgress>({
@@ -521,9 +494,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
           this.status = res;
           m.redraw();
         } catch (e) {
-          // Convert tick failures into a synthetic error phase so the
-          // existing UI shows the close button and a meaningful
-          // message instead of freezing on the last %.
+          // Falha no tick vira uma fase de erro sintética, para a UI mostrar o
+          // botão de fechar e a mensagem em vez de travar no último %.
           const detail = errorDetail(e, String(trans('phase_error_network')));
           this.status = {
             ...(this.status as ExportProgress),
@@ -552,8 +524,8 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         surface: false,
       });
     } catch (e) {
-      // The job may still be holding a server-side lock — let the user
-      // know so they understand if the next export complains.
+      // O job pode ainda estar com a trava no servidor; avisa caso o próximo
+      // export reclame.
       console.warn('[backup] export cancel failed', errorDetail(e));
       app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }

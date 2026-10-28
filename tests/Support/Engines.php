@@ -18,33 +18,27 @@ use Illuminate\Events\Dispatcher;
 use PDO;
 
 /**
- * Builds standalone Eloquent (Capsule) connections to each database
- * engine the extension claims to support, so the transfer tests can run
- * the real `DatabaseDumper`/`DatabaseRestorer` against live servers.
+ * Conexões Eloquent (Capsule) avulsas para cada motor suportado, para os
+ * testes de transferência rodarem o `DatabaseDumper`/`DatabaseRestorer`
+ * reais contra servidores no ar.
  *
- * Connection coordinates come from environment variables — one per
- * engine — formatted as a `key=value;key=value` string:
+ * Cada motor lê uma variável de ambiente no formato `chave=valor;...`:
  *
  *   BACKUP_TEST_MYSQL=host=127.0.0.1;port=3306;username=root;password=;database=backup_xfer_test
  *
- * An engine whose variable is unset (or whose server is unreachable) is
- * reported as unavailable and its test pairs are skipped, so the suite
- * still runs on a bare checkout — SQLite needs no server and is always
- * available when the pdo_sqlite extension is loaded.
- *
- * Every engine talks to a DEDICATED `backup_xfer_test` database that the
- * harness creates on demand. This keeps the dump scoped to the fixture
- * tables and guarantees we never read from or clobber a real Flarum
- * install that happens to live on the same server.
+ * Motor sem variável (ou fora do ar) é pulado; o SQLite não precisa de
+ * servidor e roda sempre que o pdo_sqlite estiver carregado. Todos usam
+ * um banco DEDICADO, `backup_xfer_test`, para o dump nunca ler nem
+ * apagar um Flarum real no mesmo servidor.
  */
 final class Engines
 {
-    /** Engine keys, matching the Dialect enum values. */
+    /** Chaves dos motores, iguais aos valores do enum Dialect. */
     public const ALL = ['mysql', 'mariadb', 'postgres', 'sqlite'];
 
     private const DB_NAME = 'backup_xfer_test';
 
-    /** @var array<string, Connection|false> dialect => connection, or false when unavailable */
+    /** @var array<string, Connection|false> dialeto => conexão, ou false se indisponível */
     private static array $cache = [];
 
     private static ?Capsule $capsule = null;
@@ -68,16 +62,15 @@ final class Engines
         }
     }
 
-    /** @return list<string> dialects reachable in this environment */
+    /** @return list<string> dialetos acessíveis neste ambiente */
     public static function available(): array
     {
         return array_values(array_filter(self::ALL, fn ($d) => self::connection($d) !== null));
     }
 
     /**
-     * Boot Eloquent on the shared manager so models (e.g. the Backup
-     * row ExportJob writes in finalize) resolve through these test
-     * connections. Idempotent.
+     * Liga o Eloquent ao manager compartilhado, para os models (ex.: o Backup
+     * que o ExportJob grava no finalize) usarem estas conexões. Idempotente.
      */
     public static function bootEloquent(): void
     {
@@ -101,7 +94,7 @@ final class Engines
         return self::capsule()->getConnection($name);
     }
 
-    /** Point Eloquent's default connection at a given engine. */
+    /** Aponta a conexão padrão do Eloquent para o motor dado. */
     public static function setDefaultConnection(string $dialect): void
     {
         self::capsule()->getDatabaseManager()->setDefaultConnection($dialect);
@@ -121,8 +114,8 @@ final class Engines
     private static function make(string $dialect): Connection
     {
         $capsule = self::capsule();
-        // Re-add each call is cheap and lets us reuse the same manager
-        // across the suite without leaking state between named conns.
+        // Registrar de novo a cada chamada é barato e evita vazar estado entre
+        // conexões nomeadas ao longo da suíte.
         $capsule->addConnection(self::configFor($dialect), $dialect);
 
         return $capsule->getConnection($dialect);
@@ -144,8 +137,7 @@ final class Engines
     {
         if (self::$sqliteFile === null) {
             $file = tempnam(sys_get_temp_dir(), 'bkp_sqlite_') ?: throw new \RuntimeException('tempnam failed');
-            // tempnam creates an empty file; a 0-byte file is a valid
-            // (empty) SQLite database, so nothing else to do.
+            // Arquivo vazio já é um banco SQLite válido.
             self::$sqliteFile = $file;
         }
 
@@ -158,11 +150,10 @@ final class Engines
     }
 
     /**
-     * Build a server connection config from the engine's env var,
-     * ensuring the dedicated test database exists first. The `driver`
-     * is intentionally distinct for mariadb so the connection reports
-     * driverName `mariadb` (illuminate v13's dedicated driver) and
-     * exercises the dialect-detection path that regressed.
+     * Monta a configuração a partir da variável do motor, criando antes o
+     * banco de teste. O `driver` do mariadb é separado de propósito: a conexão
+     * se apresenta como `mariadb` (driver próprio do illuminate v13) e passa
+     * pelo caminho de detecção que já regrediu.
      */
     private static function serverConfig(string $engine, string $driver, int $defaultPort): array
     {
@@ -209,8 +200,8 @@ final class Engines
 
     private static function ensureDatabase(string $driver, string $host, int $port, string $user, string $pass, string $db): void
     {
-        // Guard the database name to a strict identifier so the
-        // unparametrisable CREATE DATABASE can never carry injection.
+        // Nome do banco restrito a identificador simples: o CREATE DATABASE não
+        // aceita binding.
         if (! preg_match('/^[A-Za-z0-9_]+$/', $db)) {
             throw new \RuntimeException("Unsafe test database name: $db");
         }

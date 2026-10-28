@@ -12,7 +12,7 @@ on:
       - main
   workflow_dispatch:
 
-# §35.13 C1 — default-deny do GITHUB_TOKEN.
+# Nega tudo ao GITHUB_TOKEN por padrão; cada job declara o que precisa.
 permissions: {}
 
 concurrency:

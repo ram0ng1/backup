@@ -19,13 +19,11 @@ use Ramon\Backup\Database\Dialect;
 use RuntimeException;
 
 /**
- * Guards the engine-detection and identifier rules in {@see Dialect}.
+ * Detecção de motor e regras de identificador do {@see Dialect}.
  *
- * The headline case is the `mariadb` driver regression: illuminate/database
- * v13 ships a dedicated MariaDB driver whose `getDriverName()` returns the
- * literal string `mariadb` (not `mysql`), which the original match() did
- * not handle and threw "Unsupported database driver: mariadb". A live
- * install on Laravel 11+ hit that path the moment it pointed at MariaDB.
+ * O caso principal é o driver `mariadb` do illuminate/database v13: o
+ * `getDriverName()` devolve `mariadb`, não `mysql`, e o match() lançava
+ * "Unsupported database driver: mariadb" em qualquer instalação com MariaDB.
  */
 final class DialectTest extends TestCase
 {
@@ -34,18 +32,18 @@ final class DialectTest extends TestCase
         Mockery::close();
     }
 
-    /** illuminate v13's dedicated mariadb driver must resolve without a VERSION() probe. */
+    /** O driver mariadb do illuminate v13 resolve sem consultar VERSION(). */
     public function test_detects_dedicated_mariadb_driver(): void
     {
         $db = Mockery::mock(Connection::class);
         $db->shouldReceive('getDriverName')->andReturn('mariadb');
-        // Must NOT need to query VERSION() for the dedicated driver.
+        // Com o driver dedicado, VERSION() NÃO pode ser consultado.
         $db->shouldNotReceive('selectOne');
 
         $this->assertSame(Dialect::MARIADB, Dialect::detect($db));
     }
 
-    /** Legacy path: mysql driver pointed at a MariaDB server → detect via VERSION(). */
+    /** Driver mysql apontado para um MariaDB: detecta pelo VERSION(). */
     public function test_detects_mariadb_behind_mysql_driver(): void
     {
         $db = Mockery::mock(Connection::class);

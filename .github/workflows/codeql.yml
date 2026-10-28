@@ -1,6 +1,6 @@
 name: CodeQL
 
-# §35.13 I2 — CodeQL (JS/TS). PHP não é suportado pelo CodeQL; a cobertura
+# CodeQL (JS/TS). O CodeQL não suporta PHP; a cobertura
 # de PHP é feita por PHPStan (ci.yml) e pelas regras Semgrep (security.yml).
 #
 # NOTA: code scanning em repositório privado exige GitHub Advanced Security.
@@ -19,7 +19,7 @@ on:
   schedule:
     - cron: '0 6 * * 1'  # toda segunda, 06:00 UTC
 
-# §35.13 C1 — default-deny.
+# Nega tudo ao GITHUB_TOKEN por padrão; o job declara o que precisa.
 permissions: {}
 
 concurrency:

@@ -30,19 +30,17 @@ use Ramon\Backup\Tests\Support\Fixture;
 use Symfony\Component\Console\Tester\CommandTester;
 
 /**
- * Full-stack exercise of the two new console commands. It runs the real
- * `backup:export` to produce a `.flarum` archive from one database and
- * the real `backup:import` to restore that archive into a second
- * database, then asserts the data survived the round trip.
+ * Roda os comandos de console de verdade: `backup:export` gera um
+ * `.flarum` de um banco e `backup:import` o restaura em outro, e os dados
+ * têm que chegar intactos.
  *
- * Unlike {@see CrossEngineTransferTest} (which isolates the SQL
- * dump/restore engine), this drives the whole tick-based ExportJob /
- * ImportJob pipeline — archive packaging, manifest, inspect/extract/
- * restore phases — exactly as the CLI does in production, proving the
- * "loop runTick() to completion with no HTTP budget" approach works.
+ * Diferente do {@see CrossEngineTransferTest}, que isola o dump SQL, aqui
+ * passa o pipeline inteiro de ticks do ExportJob/ImportJob (pacote,
+ * manifesto, inspect/extract/restore), como a CLI faz em produção, com
+ * runTick() em laço e sem orçamento HTTP.
  *
- * Runs on SQLite so it needs no service container; the cross-engine SQL
- * correctness is covered by the sibling test.
+ * Roda em SQLite, sem serviço externo; a correção do SQL entre motores
+ * fica com o teste irmão.
  */
 final class CliTransferE2ETest extends TestCase
 {
@@ -77,8 +75,8 @@ final class CliTransferE2ETest extends TestCase
             'driver' => 'sqlite', 'database' => $targetFile, 'prefix' => '', 'foreign_key_constraints' => true,
         ], 'target');
         $this->capsule->setAsGlobal();
-        // ExportJob's finalize inserts a Backup Eloquent model, so the
-        // model layer must resolve to our (source) default connection.
+        // O finalize do ExportJob grava um model Backup, que precisa resolver na
+        // conexão padrão (a de origem).
         $this->capsule->bootEloquent();
 
         $this->paths = new Paths([
@@ -91,9 +89,8 @@ final class CliTransferE2ETest extends TestCase
 
         $source = $this->capsule->getConnection('default');
 
-        // Fixture::build wipes the whole schema, so seed it BEFORE
-        // creating the `backups` registry table the export finalize
-        // writes to.
+        // Fixture::build apaga o schema inteiro, então ela vem ANTES da tabela
+        // `backups` que o finalize do export usa.
         Fixture::build($source);
         Fixture::seed($source);
 
@@ -159,7 +156,7 @@ final class CliTransferE2ETest extends TestCase
 
         $this->assertSame(0, $importStatus, $importTester->getDisplay());
 
-        // --- verify the data transferred ----------------------------------
+        // --- confere os dados transferidos ---------------------------------
         $actual = Fixture::snapshot($target);
         $this->assertSame($expected['authors'], $actual['authors']);
         $this->assertSame($expected['posts'], $actual['posts']);
@@ -171,18 +168,16 @@ final class CliTransferE2ETest extends TestCase
         $importJob = $this->importJob($target);
         $tester = new CommandTester(new ImportCommand($importJob, $this->storagePaths));
 
-        $status = $tester->execute(['archive' => __FILE__]); // any existing file
+        $status = $tester->execute(['archive' => __FILE__]); // qualquer arquivo existente
         $this->assertSame(1, $status);
         $this->assertStringContainsString('--yes', $tester->getDisplay());
     }
 
     /**
-     * Security regression: the user-supplied decryption private key must
-     * NEVER be written to the on-disk job-state file. We export an
-     * encrypted archive, import it with the matching private key, and
-     * assert (a) the key never appears in job.json at any point, and
-     * (b) decryption still succeeds (data is restored) — proving the
-     * in-memory-only key handling didn't break the feature.
+     * Segurança: a chave privada informada para descriptografar NUNCA pode
+     * ir para o job.json em disco. Exporta criptografado, importa com a
+     * chave e confere que (a) ela nunca aparece no job.json e (b) a
+     * restauração funciona, ou seja, a chave só em memória não quebrou nada.
      */
     public function test_decryption_key_is_never_persisted_to_job_state(): void
     {
@@ -198,7 +193,7 @@ final class CliTransferE2ETest extends TestCase
         $publicKey  = base64_encode(sodium_crypto_box_publickey($keypair));
         $privateKey = base64_encode(sodium_crypto_box_secretkey($keypair));
 
-        // Encrypted export to the public key.
+        // Export criptografado com a chave pública.
         $exportJob = new ExportJob(
             $this->storagePaths,
             $this->paths,
@@ -221,7 +216,7 @@ final class CliTransferE2ETest extends TestCase
         $this->assertSame('done', $estate->get('phase'), 'Encrypted export failed: '.$estate->get('message'));
         $archive = $this->storagePaths->backupsDir().DIRECTORY_SEPARATOR.(string) $estate->get('result')['filename'];
 
-        // Import with the private key, watching the job-state file.
+        // Import com a chave privada, vigiando o arquivo de estado do job.
         $importJob = $this->importJob($target);
         $importId = bin2hex(random_bytes(8));
         $importDir = $this->storagePaths->importJobDir($importId);
@@ -250,7 +245,7 @@ final class CliTransferE2ETest extends TestCase
 
         $this->assertSame('done', $istate->get('phase'), 'Encrypted import failed: '.$istate->get('message'));
 
-        // Decryption worked end to end.
+        // A descriptografia funcionou de ponta a ponta.
         $actual = Fixture::snapshot($target);
         $this->assertSame($expected['authors'], $actual['authors']);
         $this->assertSame($expected['posts'], $actual['posts']);
@@ -289,8 +284,8 @@ final class CliTransferE2ETest extends TestCase
 
     private function inventory(): Inventory
     {
-        // db-only export never calls into the extension manager, so a
-        // bare mock is enough to satisfy the constructor.
+        // Export só de banco nunca chama o gerenciador de extensões; um mock vazio
+        // satisfaz o construtor.
         $manager = Mockery::mock(\Flarum\Extension\ExtensionManager::class);
         return new Inventory($manager, $this->paths);
     }

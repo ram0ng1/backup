@@ -17,25 +17,23 @@ use Ramon\Backup\Database\DatabaseRestorer;
 use Ramon\Backup\Database\Dialect;
 
 /**
- * Thin test-only driver that runs the production dump/restore engine end
- * to end, mirroring exactly what {@see \Ramon\Backup\Job\ExportJob} and
- * {@see \Ramon\Backup\Job\ImportJob} do per tick — minus the archive
- * packaging and HTTP chunking, which are irrelevant to whether the SQL
- * itself transfers correctly between engines.
+ * Roda o dump/restore de produção de ponta a ponta, como o
+ * {@see \Ramon\Backup\Job\ExportJob} e o {@see \Ramon\Backup\Job\ImportJob}
+ * fazem por tick, sem o empacotamento do arquivo e os chunks HTTP, que não
+ * mudam se o SQL atravessa os motores.
  */
 final class Transfer
 {
     /**
-     * Dump the whole source database as portable SQL targeting
-     * `$targetDialect`. The source connection's dedicated test DB only
-     * holds the fixture tables, so the dump is naturally scoped.
+     * Dump do banco de origem inteiro como SQL para `$targetDialect`. O banco
+     * de teste só tem as tabelas da fixture.
      */
     public static function dump(Connection $source, string $targetDialect): string
     {
         $dumper = new DatabaseDumper($source, Dialect::parse($targetDialect));
 
         $sql = $dumper->preamble();
-        // All DROPs first, then all CREATEs+data — mirrors ExportJob.
+        // Todos os DROPs antes, depois CREATEs e dados, como no ExportJob.
         $sql .= $dumper->dropAllTables();
         foreach ($dumper->listTables() as $table) {
             $sql .= $dumper->dumpSchema($table);
@@ -56,8 +54,7 @@ final class Transfer
     }
 
     /**
-     * Replay dumped SQL into the target connection, applying the same
-     * FK-suspension dance the import job performs around the load.
+     * Aplica o SQL no destino com a mesma suspensão de FK que o import faz.
      */
     public static function restore(Connection $target, string $sql): void
     {

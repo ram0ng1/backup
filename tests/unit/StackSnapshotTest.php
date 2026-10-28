@@ -15,15 +15,13 @@ use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Environment\StackSnapshot;
 
 /**
- * Guards the stack gate in {@see StackSnapshot}.
+ * Bloqueio por stack do {@see StackSnapshot}.
  *
- * The incident it exists for: a backup taken on PHP 8.5 was restored
- * onto a production host running 8.3. The restore reported success and
- * the result was incomplete, because nothing compared the two stacks —
- * the archive recorded `php_version` since format_version 2 and the
- * import side never read it. Restoring a newer stack over an older one
- * ships a `vendor/` tree and a `composer.lock` resolved for a PHP this
- * host cannot parse, so it must abort BEFORE the first write.
+ * Um backup feito em PHP 8.5 foi restaurado num servidor com 8.3: o
+ * restore deu sucesso e o resultado ficou incompleto, porque nada
+ * comparava as stacks. O `vendor/` e o `composer.lock` vêm resolvidos para
+ * um PHP que este servidor não interpreta, então o restore tem que parar
+ * ANTES da primeira escrita.
  */
 final class StackSnapshotTest extends TestCase
 {
@@ -60,7 +58,7 @@ final class StackSnapshotTest extends TestCase
         $this->assertSame('', StackSnapshot::minor(''));
     }
 
-    /** The headline case: newer origin onto older destination must not continue. */
+    /** Origem mais nova sobre destino mais antigo não pode continuar. */
     public function test_blocks_when_archive_comes_from_a_newer_php(): void
     {
         $reason = StackSnapshot::blockingReason($this->metaV3($this->nextMinorUp()));
@@ -71,9 +69,8 @@ final class StackSnapshotTest extends TestCase
     }
 
     /**
-     * Archives written before the stack snapshot existed still carry a
-     * bare `php_version`, so the gate covers them too — that is exactly
-     * the archive the original incident was restored from.
+     * Arquivos anteriores ao snapshot de stack ainda trazem `php_version`
+     * solto, e o bloqueio vale para eles também.
      */
     public function test_blocks_on_legacy_v2_meta_with_only_php_version(): void
     {
@@ -90,7 +87,7 @@ final class StackSnapshotTest extends TestCase
         $this->assertSame([], StackSnapshot::advisories($meta));
     }
 
-    /** Older origin runs fine, but the restored composer.lock needs re-resolving. */
+    /** Origem mais antiga roda, mas o composer.lock restaurado precisa ser resolvido de novo. */
     public function test_allows_older_origin_with_composer_lock_advisory(): void
     {
         $meta = $this->metaV3($this->previousMinorDown());
@@ -102,9 +99,8 @@ final class StackSnapshotTest extends TestCase
     }
 
     /**
-     * No usable version data means no comparison — an ancient archive
-     * must keep importing exactly as it did before the gate shipped,
-     * rather than being blocked by a missing field.
+     * Sem versão utilizável não há comparação: um arquivo antigo continua
+     * importando como antes, em vez de ser barrado por campo ausente.
      */
     public function test_absent_or_malformed_metadata_never_blocks(): void
     {
@@ -130,7 +126,7 @@ final class StackSnapshotTest extends TestCase
         $this->assertStringContainsString('pdo', $reason);
     }
 
-    /** A host-specific extension the source happened to have is not a blocker. */
+    /** Extensão de PHP específica do servidor de origem não bloqueia. */
     public function test_optional_extensions_are_not_blockers(): void
     {
         $meta = $this->metaV3(
@@ -142,7 +138,7 @@ final class StackSnapshotTest extends TestCase
         $this->assertNull(StackSnapshot::blockingReason($meta, ['pdo', 'mbstring']));
     }
 
-    /** Case differences between SAPI listings must not read as missing. */
+    /** Diferença de caixa entre as listagens do SAPI não conta como ausência. */
     public function test_extension_comparison_is_case_insensitive(): void
     {
         $meta = $this->metaV3(StackSnapshot::minor(PHP_VERSION), ['PDO', 'Mbstring']);

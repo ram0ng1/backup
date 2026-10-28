@@ -5,20 +5,19 @@ import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 
 import { apiRequest, apiUrl, errorDetail, fmtBytes } from '../utils/api';
 
-/** Abort the upload XHR if no progress event fires for this long. */
+/** Aborta o XHR do upload se nenhum evento de progresso chegar nesse tempo. */
 const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
 
 /**
- * Fallback chunk size if /backup/imports init doesn't return one.
- * Server-recommended is 4 MB (see UploadImportController::RECOMMENDED_CHUNK_BYTES).
+ * Tamanho do chunk se o init de /backup/imports não devolver um. O servidor
+ * recomenda 4 MB (UploadImportController::RECOMMENDED_CHUNK_BYTES).
  */
 const FALLBACK_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
- * How many times to retry a single failed chunk before giving up on
- * the whole upload. Each retry uses the same offset so it overwrites
- * (idempotent). Two retries cover a transient hiccup without
- * spinning forever on a real outage.
+ * Novas tentativas por chunk antes de desistir do upload. Repetir é
+ * idempotente (mesmo offset); duas cobrem uma falha passageira sem insistir
+ * numa queda real.
  */
 const CHUNK_RETRY_LIMIT = 2;
 
@@ -40,12 +39,12 @@ interface ArchiveManifest {
   asset_count?: number;
   storage_count?: number;
   extension_count?: number;
-  // Older archives shipped extensions as a flat string[] of dirnames.
-  // New archives ship rich descriptors.
+  // Arquivos antigos traziam as extensões como string[] de diretórios; os
+  // novos trazem descritores.
   extensions?: string[] | ArchiveExtensionEntry[];
   has_composer?: boolean;
-  // Archives from before the project-reconcile work don't carry the
-  // site's root extend.php, so the toggle for it stays hidden.
+  // Arquivos anteriores ao reconcile do projeto não trazem o extend.php da
+  // raiz, e o toggle dele fica oculto.
   has_root_extend?: boolean;
 }
 
@@ -78,9 +77,8 @@ interface ImportProgress {
     restored_statements: number;
     percent: number;
   };
-  // A restore that lost entries still ends in `done`. These two are
-  // what stop the completed screen from painting clean success over
-  // an incomplete restore.
+  // Uma restauração que perdeu entradas também termina em `done`; são estes
+  // dois campos que impedem a tela final de mostrar sucesso limpo.
   warnings?: string[];
   incomplete?: boolean;
 }
@@ -88,15 +86,10 @@ interface ImportProgress {
 const trans = (key: string, params?: Record<string, unknown>) => app.translator.trans(`ramon-backup.admin.import_modal.${key}`, params ?? {});
 
 /**
- * Three-stage modal:
- *   1. upload   — operator picks a `.flarum` file. We POST to /imports
- *                  and the server validates the header without
- *                  decrypting.
- *   2. configure — depending on the inspect result we ask for the
- *                  private key (only when the archive is encrypted)
- *                  AND a confirm-replace checkbox in all cases. The
- *                  user agreed in setup that we'd ask at this point.
- *   3. progress — chunked-tick polling drives a progress bar.
+ * Modal em três estágios: upload (o servidor valida o cabeçalho do
+ * `.flarum` sem descriptografar), configuração (chave privada se o arquivo
+ * for criptografado e, sempre, a confirmação de substituição) e progresso
+ * por ticks.
  */
 export default class ImportModal extends Modal<ImportModalAttrs> {
   protected stage: 'upload' | 'configure' | 'progress' = 'upload';
@@ -112,21 +105,20 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   protected confirmReplace = false;
   protected starting = false;
 
-  // Section toggles. Default to "everything that's actually inside the
-  // archive" — the user explicitly opts OUT of pieces they don't want
-  // to overwrite. Initialised when the inspect result arrives.
+  // Seções: por padrão, tudo o que o arquivo contém; o usuário desmarca o
+  // que não quer sobrescrever. Preenchidas quando chega o inspect.
   protected sectionDb = false;
   protected sectionAssets = false;
   protected sectionStorage = false;
   protected sectionExtensions = false;
-  // Per-extension toggles, keyed by directory name from the manifest.
+  // Por extensão, indexado pelo diretório que vem no manifesto.
   protected extensionsByName: Record<string, boolean> = {};
 
-  // Opt-in: overwriting the site's root extend.php replaces live config
-  // of THIS server, so it never happens unless asked for.
+  // Opt-in: sobrescrever o extend.php da raiz troca a configuração viva
+  // DESTE servidor, então só acontece se pedirem.
   protected sectionRootExtend = false;
-  // Opt-out: losing this server's SMTP / queue / integration settings to
-  // the source forum's is the defect this whole layer exists to stop.
+  // Opt-out: perder SMTP, fila e integrações deste servidor para as da
+  // origem é justamente o defeito que esta camada evita.
   protected preserveSettings = true;
 
   protected status: ImportProgress | null = null;
@@ -149,7 +141,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     return this.progressContent();
   }
 
-  // ────────────────────────────────────────── upload stage
+  // ────────────────────────────────────────── upload
 
   uploadContent() {
     return (
@@ -210,12 +202,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     this.uploadError = null;
 
     try {
-      // Use a raw XHR so we can show upload progress — Flarum's
-      // app.request (mithril's m.request) does not expose
-      // `xhr.upload.onprogress`. Once 100% has been sent the server
-      // still has to read the header + validate the archive, so we
-      // flip to an indeterminate "Inspecting…" state until the
-      // response comes back.
+      // XHR cru para ter o progresso do upload: o app.request (m.request) não
+      // expõe `xhr.upload.onprogress`. Com 100% enviado o servidor ainda valida
+      // o arquivo, então a barra fica indeterminada até a resposta.
       const res = await this.uploadWithProgress(this.file, (pct) => {
         this.uploadProgress = pct;
         if (pct >= 100) this.uploadIndeterminate = true;
@@ -223,17 +212,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
       });
       this.inspect = res;
 
-      // Seed section toggles from what the archive actually contains.
-      // Anything missing from the archive can't be ticked anyway, so
-      // there's no value in defaulting it to true.
+      // Só dá para marcar o que o arquivo contém.
       const contents = res.meta.contents || [];
       this.sectionDb = contents.includes('db');
       this.sectionAssets = contents.includes('assets');
       this.sectionStorage = contents.includes('storage');
       this.sectionExtensions = contents.includes('extensions');
 
-      // Normalise to {id} regardless of which manifest version the
-      // archive was packed with (string[] vs ArchiveExtensionEntry[]).
+      // Normaliza para {id}, seja o manifesto string[] ou ArchiveExtensionEntry[].
       const exts = res.meta.manifest?.extensions || [];
       this.extensionsByName = {};
       for (const e of exts) {
@@ -252,20 +238,15 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   /**
-   * Chunked upload + inspect.
+   * Upload em chunks + inspect. Um POST multipart único de vários GB esbarra
+   * em upload_max_filesize, post_max_size, client_max_body_size do nginx e
+   * memory_limit, e volta como 500. Por isso são três etapas:
    *
-   * Single multipart POSTs of multi-GB archives reliably hit server
-   * caps (`upload_max_filesize`, `post_max_size`, nginx
-   * `client_max_body_size`, `memory_limit` during multipart parsing)
-   * and surface as 500s. Instead we do three small requests:
+   *   1. POST /backup/imports                — init, devolve job_id + chunk_size
+   *   2. POST /backup/imports/{id}/chunk*    — anexa cada fatia (laço)
+   *   3. POST /backup/imports/{id}/inspect   — finaliza e devolve os metadados
    *
-   *   1. POST /backup/imports                — init, gets job_id + chunk_size
-   *   2. POST /backup/imports/{id}/chunk*    — append each slice (loop)
-   *   3. POST /backup/imports/{id}/inspect   — finalise, return meta
-   *
-   * Progress is computed from `bytesSent / file.size` across all chunk
-   * requests so the bar advances smoothly through the entire file
-   * even though each individual request only carries a few MB.
+   * O progresso é bytesSent / file.size, somado entre os chunks.
    */
   private async uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<InspectResult> {
     // ─── 1. init ──────────────────────────────────────────────────
@@ -279,7 +260,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const jobId = init.job_id;
     const chunkSize = init.chunk_size > 0 ? init.chunk_size : FALLBACK_CHUNK_BYTES;
 
-    // ─── 2. chunk loop ────────────────────────────────────────────
+    // ─── 2. chunks ────────────────────────────────────────────────
     let offset = 0;
     while (offset < file.size) {
       const end = Math.min(offset + chunkSize, file.size);
@@ -294,8 +275,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         } catch (e) {
           attempt++;
           if (attempt > CHUNK_RETRY_LIMIT) throw e;
-          // Back off briefly before retrying — gives a transient
-          // hiccup a moment to clear without spamming the server.
+          // Espera um pouco antes de repetir, sem martelar o servidor.
           await new Promise((r) => setTimeout(r, 750 * attempt));
         }
       }
@@ -315,10 +295,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   /**
-   * Single-chunk upload as a raw octet-stream POST. We use XHR
-   * (rather than fetch) so the per-chunk idle timeout works the
-   * same way it did for the old monolithic upload, and so we can
-   * pull a detailed error message off any non-2xx response body.
+   * Envia um chunk como octet-stream cru. XHR em vez de fetch para ter o
+   * timeout por inatividade e ler a mensagem de erro de respostas não 2xx.
    */
   private sendChunk(jobId: string, offset: number, slice: Blob): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -346,7 +324,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           try {
             detail = JSON.parse(xhr.responseText)?.errors?.[0]?.detail;
           } catch {
-            /* non-JSON body */
+            /* corpo não é JSON */
           }
           reject({ detail: detail || `${xhr.status} ${xhr.statusText}` });
         }
@@ -370,7 +348,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     });
   }
 
-  // ────────────────────────────────────────── configure stage
+  // ────────────────────────────────────────── configuração
 
   configureContent() {
     const i = this.inspect!;
@@ -481,8 +459,7 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     const hasStorage = contents.includes('storage');
     const hasExtensions = contents.includes('extensions');
     const rawExtList = manifest.extensions || [];
-    // Normalise to a uniform shape so the renderer can stay simple,
-    // regardless of which manifest version the archive used.
+    // Formato único, qualquer que seja a versão do manifesto.
     const extList: ArchiveExtensionEntry[] = (rawExtList as Array<string | ArchiveExtensionEntry>).map((e) =>
       typeof e === 'string' ? { id: e, location: 'workbench' as const } : e
     );
@@ -502,8 +479,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
               this.sectionExtensions,
               (v) => {
                 this.sectionExtensions = v;
-                // Cascade: turning the section off / on flips every
-                // child to match. The user can then untick individuals.
+                // Ligar/desligar a seção vale para todas as filhas; depois dá para
+                // desmarcar uma a uma.
                 for (const ext of extList) this.extensionsByName[ext.id] = v;
               },
               manifest.extension_count
@@ -580,10 +557,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   buildSelection() {
-    // The backend treats `extensions: true` as "all" and an array as
-    // a whitelist of directory names. When every box is checked, send
-    // `true` so the user's intent isn't lost if a new extension shows
-    // up between inspect and apply (it shouldn't, but be defensive).
+    // O backend lê `extensions: true` como "todas" e um array como lista de
+    // diretórios. Com tudo marcado vai `true`, para não perder uma extensão
+    // que apareça entre o inspect e o apply.
     const extEntries = Object.entries(this.extensionsByName);
     const allChecked = extEntries.length > 0 && extEntries.every(([, v]) => v);
     const extensionsField: boolean | string[] = !this.sectionExtensions ? false : allChecked ? true : extEntries.filter(([, v]) => v).map(([k]) => k);
@@ -634,16 +610,14 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     }
   }
 
-  // ────────────────────────────────────────── progress stage
+  // ────────────────────────────────────────── progresso
 
   progressContent() {
     const s = this.status;
     if (!s) return <LoadingIndicator />;
 
-    // Once the server reports phase=done we hand the screen over to a
-    // dedicated completion view: the user has finished waiting and
-    // now needs to know what to do next (which differs depending on
-    // whether the DB was actually replaced).
+    // Com phase=done a tela passa para a de conclusão, que muda conforme o
+    // banco foi substituído ou não.
     if (s.phase === 'done') return this.completedContent();
 
     const isError = s.phase === 'error';
@@ -679,22 +653,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
   }
 
   /**
-   * Replaces the progress UI as soon as `phase === 'done'`. Two
-   * shapes:
-   *
-   *   - DB restored — the admin's session was just wiped together
-   *     with the rest of the `users` / `sessions` tables. We make
-   *     this very clear and offer a single primary action: reload.
-   *     Anything else (refreshing the list, dismissing) would race
-   *     against an invalidated cookie and surface a confusing 401.
-   *
-   *   - Files only — the session is fine, just close.
-   */
-  /**
-   * Warning block for a restore that finished but lost entries, or that
-   * carries a stack advisory. Rendered on the completed screen in both
-   * shapes — an incomplete restore must never present as clean success,
-   * which is the failure mode this whole path exists to remove.
+   * Avisos de uma restauração que terminou com entradas perdidas ou com
+   * alerta de stack. Restauração incompleta nunca aparece como sucesso.
    */
   completedWarnings() {
     const warnings = this.status?.warnings ?? [];
@@ -712,6 +672,11 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
     );
   }
 
+  /**
+   * Tela final. Se o banco foi restaurado, a sessão do admin sumiu junto com
+   * `users`/`sessions`: a única ação é recarregar, porque qualquer outra
+   * chamada esbarraria no cookie inválido e daria um 401 confuso.
+   */
   completedContent() {
     if (this.sectionDb) {
       return (
@@ -763,19 +728,17 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             method: 'POST',
             url: `${apiUrl()}/backup/imports/${this.inspect.job_id}/tick`,
             surface: false,
-            // The server never stores the decryption key on disk; we
-            // re-send it each tick so the inspect/extract phases can
-            // decrypt. Harmless (ignored) for unencrypted archives and
-            // once extraction is done.
+            // O servidor nunca grava a chave em disco; ela vai em cada tick para o
+            // inspect/extract descriptografarem. Inofensivo em arquivo sem
+            // criptografia e depois da extração.
             body: { private_key: this.privateKey.trim() || null },
           });
           this.status = res;
           m.redraw();
         } catch (e: any) {
-          // Restore is more dangerous to leave hanging than export —
-          // the server may still be mid-write. Surface a synthetic
-          // error phase, and explicitly tell the user to verify
-          // server state before retrying.
+          // Restore parado é mais perigoso que export: o servidor pode estar no
+          // meio de uma escrita. Vira fase de erro pedindo para conferir o
+          // servidor antes de tentar de novo.
           const detail = errorDetail(e, String(trans('phase_error_network')));
           console.error('[backup] import tick failed', detail);
           this.status = {
@@ -788,12 +751,9 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         }
       }
       if (this.status?.phase === 'done') {
-        // Don't refresh the parent panel — when the backup includes
-        // the database, restoring it has just replaced the sessions
-        // table this admin is authenticated against. Any further API
-        // call from this stale session would fail (401 / CSRF) and
-        // surface as a confusing "Oops!" toast. The user clicks
-        // Reload below and gets a clean session.
+        // Não atualiza o painel: se o banco foi restaurado, a tabela de sessões
+        // mudou e qualquer chamada desta sessão falharia (401/CSRF). O usuário
+        // recarrega a página e ganha uma sessão nova.
         if (this.status.incomplete) {
           app.alerts.show({ type: 'warning' }, trans('incomplete_title'));
         } else {

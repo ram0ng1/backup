@@ -1,5 +1,4 @@
-// Allow .less imports to be referenced from TS without an explicit
-// type — the bundler stubs them out at build time.
+// Imports de .less sem tipo explícito: o bundler os resolve no build.
 declare module '*.less' {
   const content: string;
   export default content;

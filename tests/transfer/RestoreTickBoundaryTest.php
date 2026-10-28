@@ -25,19 +25,16 @@ use Ramon\Backup\StoragePaths;
 use ReflectionMethod;
 
 /**
- * Guarda de regressão da fronteira de tick no restore.
+ * Fronteira de tick no restore.
  *
- * O `DatabaseRestorer` não sobrevive ao tick, mas o `restore_offset` era
- * salvo com os bytes que ainda estavam no buffer dele — tudo depois do
- * último delimitador. Resultado: a cabeça do statement se perdia e o tick
- * seguinte reabria o `dump.sql` no meio de um literal, mandando a cauda do
- * INSERT sozinha para o banco. O sintoma era um `SQLSTATE[42000] ... near
- * 'rs" says it all.<br/>...'` — um pedaço de post virando SQL.
+ * O `DatabaseRestorer` não sobrevive ao tick, então o `restore_offset`
+ * não pode contar os bytes que ainda estão no buffer dele (tudo depois do
+ * último delimitador). Senão o tick seguinte reabre o `dump.sql` no meio
+ * de um literal e manda a cauda do INSERT sozinha para o banco.
  *
- * Só aparecia quando um statement cruzava o orçamento de 4 MB do tick, ou
- * seja, em dump de fórum real. O harness de teste existente (Support\Transfer)
- * alimenta o dump inteiro de uma vez e por isso nunca cruzava fronteira
- * nenhuma.
+ * Só acontece quando um statement cruza o orçamento de 4 MB do tick, ou
+ * seja, em dump de fórum real; o Support\Transfer aplica o dump inteiro
+ * de uma vez e nunca cruza fronteira.
  */
 final class RestoreTickBoundaryTest extends TestCase
 {

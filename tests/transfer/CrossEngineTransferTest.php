@@ -18,21 +18,16 @@ use Ramon\Backup\Tests\Support\Fixture;
 use Ramon\Backup\Tests\Support\Transfer;
 
 /**
- * The headline e2e: a dump produced for engine B and replayed into a
- * live engine B must reproduce the source data EXACTLY, for every
- * ordered (source → target) pair of supported engines — i.e. "it works
- * in all directions".
+ * Um dump gerado para o motor B e aplicado num motor B real tem que
+ * reproduzir a origem EXATAMENTE, para todo par ordenado (origem →
+ * destino) de motores suportados.
  *
- * The provider enumerates the full 4×4 matrix (mysql, mariadb, postgres,
- * sqlite). Pairs whose source or target engine is not reachable in the
- * current environment are skipped, so locally this runs whatever is up
- * (e.g. mysql/postgres/sqlite → 9 pairs) and CI, with all four service
- * containers, runs the complete 16.
+ * O provider monta a matriz 4×4 (mysql, mariadb, postgres, sqlite). Pares
+ * com motor fora do ar são pulados: localmente roda o que estiver no ar e
+ * a CI, com os quatro serviços, roda os 16.
  *
- * Same-engine pairs double as the per-version round-trip check: the
- * dump targets the very engine it was read from and is restored in
- * place, which is exactly the regression that the `mariadb` driver bug
- * would have broken.
+ * Os pares do mesmo motor servem de ida e volta por versão: foi esse o
+ * caminho que o bug do driver `mariadb` quebrava.
  */
 final class CrossEngineTransferTest extends TestCase
 {
@@ -46,20 +41,18 @@ final class CrossEngineTransferTest extends TestCase
             $this->markTestSkipped("Engines not both available: $sourceDialect → $targetDialect");
         }
 
-        // Always rebuild + reseed the source so each direction starts
-        // from a known state regardless of provider ordering.
+        // Recria e popula a origem a cada direção, para não depender da ordem do
+        // provider.
         Fixture::build($source);
         Fixture::seed($source);
         $expected = Fixture::snapshot($source);
 
         $sql = Transfer::dump($source, $targetDialect);
 
-        // Give the target a clean slate. Across the full matrix a single
-        // server is reused as the target for dumps coming from different
-        // source engines; without this, a child table left behind by an
-        // earlier direction (with a differently-typed FK column) makes
-        // the next CREATE fail the FK compatibility check. A real import
-        // restores onto a fresh/consistent install, which this mirrors.
+        // Destino limpo: na matriz o mesmo servidor recebe dumps de motores
+        // diferentes, e uma tabela filha deixada por outra direção (com FK de
+        // outro tipo) faz o próximo CREATE falhar na checagem de FK. Um import
+        // real também cai numa instalação consistente.
         Fixture::reset($target);
 
         Transfer::restore($target, $sql);
@@ -77,7 +70,7 @@ final class CrossEngineTransferTest extends TestCase
             "Posts mismatch transferring $sourceDialect → $targetDialect"
         );
 
-        // The dumped SQL must declare it targets the requested engine.
+        // O SQL gerado precisa declarar o motor de destino pedido.
         $this->assertNotSame('', $sql);
     }
 
@@ -92,15 +85,13 @@ final class CrossEngineTransferTest extends TestCase
     }
 
     /**
-     * Robustness: a restore must succeed even when the destination
-     * already holds an INCOMPATIBLE prior schema. We first leave the
-     * target populated with its own engine's native shapes (MySQL ↔
-     * UNSIGNED int columns, PostgreSQL ↔ a live posts→authors FK), then
-     * restore a dump from a DIFFERENT source engine WITHOUT clearing the
-     * target. A naive per-table DROP/CREATE breaks here — recreating the
-     * parent trips MySQL's FK column-type check (error 3780), or fails
-     * to drop a referenced parent on PostgreSQL. The up-front drop-all
-     * (DatabaseDumper::dropAllTables) is what makes this safe.
+     * O restore tem que funcionar mesmo com um schema anterior INCOMPATÍVEL
+     * no destino: tipos nativos do próprio motor (INT UNSIGNED no MySQL, FK
+     * posts→authors viva no PostgreSQL) e um dump de OUTRO motor por cima,
+     * sem limpar. DROP/CREATE tabela a tabela quebra aqui (erro 3780 do MySQL
+     * na checagem de tipo da FK, ou pai referenciado que o PostgreSQL não
+     * deixa apagar); o drop-all antecipado (DatabaseDumper::dropAllTables)
+     * é o que resolve.
      */
     #[DataProvider('serverEngineProvider')]
     public function test_reimport_over_incompatible_prior_state(string $target): void
@@ -112,19 +103,17 @@ final class CrossEngineTransferTest extends TestCase
             $this->markTestSkipped("Needs $target + sqlite available");
         }
 
-        // Prior state: the target's own native schema (e.g. UNSIGNED
-        // ints on MySQL; a referenced parent on PostgreSQL).
+        // Estado anterior: o schema nativo do próprio destino.
         Fixture::build($dest);
         Fixture::seed($dest);
 
-        // A dump from a different engine yields differently-typed
-        // columns for the same tables (e.g. signed ints when going
-        // SQLite → MySQL).
+        // Um dump de outro motor traz colunas de outro tipo para as mesmas
+        // tabelas (ex.: int com sinal indo de SQLite para MySQL).
         Fixture::build($sqlite);
         Fixture::seed($sqlite);
         $expected = Fixture::snapshot($sqlite);
 
-        // Re-import over the incompatible prior state, no manual reset.
+        // Reimporta por cima do estado incompatível, sem reset manual.
         Transfer::restore($dest, Transfer::dump($sqlite, $target));
 
         $actual = Fixture::snapshot($dest);

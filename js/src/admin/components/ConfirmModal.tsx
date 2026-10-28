@@ -14,11 +14,10 @@ export interface ConfirmModalAttrs extends IInternalModalAttrs {
 }
 
 /**
- * Dropin replacement for `window.confirm()`. Native confirm breaks the
- * Flarum dark-mode chrome and is silently auto-rejected by some
- * locked-down corporate browsers — this modal stays inside the SPA.
+ * Substituto do `window.confirm()`, que quebra o modo escuro do Flarum e é
+ * rejeitado em silêncio por alguns navegadores corporativos travados.
  *
- * Usage:
+ * Uso:
  *   const ok = await confirmAsync({ title, body, danger: true });
  *   if (!ok) return;
  */
@@ -59,9 +58,8 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
     this.hide();
   }
 
-  // Esc key / backdrop click / X button all funnel through Mithril's
-  // remove lifecycle. If the user dismissed without picking a button,
-  // treat that as a cancel so the awaiting Promise actually resolves.
+  // Esc, clique fora e o X passam pelo onremove do Mithril. Fechar sem
+  // escolher um botão conta como cancelar, para a Promise resolver.
   onbeforeremove(vnode: Mithril.VnodeDOM<ConfirmModalAttrs, this>) {
     if (!this.resolved) {
       this.resolved = true;
@@ -71,7 +69,7 @@ export default class ConfirmModal extends Modal<ConfirmModalAttrs> {
   }
 }
 
-/** Promise wrapper so callers can `await confirmAsync(...)`. */
+/** Versão em Promise, para usar `await confirmAsync(...)`. */
 export function confirmAsync(attrs: Omit<ConfirmModalAttrs, 'onConfirm' | 'onCancel' | keyof IInternalModalAttrs>): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;

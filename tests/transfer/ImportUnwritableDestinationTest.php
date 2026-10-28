@@ -23,11 +23,9 @@ use Ramon\Backup\StoragePaths;
 use ReflectionMethod;
 
 /**
- * Guarda de regressão para o destino que o disco recusa. Um `vendor/`
- * pertencente a root com o PHP rodando como www-data fazia o extract
- * lançar no primeiro arquivo de extensão — e a restauração inteira
- * morria sem gravar banco, assets nem storage. O destino recusado agora
- * é contado, amostrado com o motivo do SO, e a restauração segue.
+ * Destino que o disco recusa (ex.: `vendor/` de root com o PHP como
+ * www-data). Ele é contado e amostrado com o motivo do SO, e a
+ * restauração segue em vez de morrer sem gravar banco, assets e storage.
  */
 final class ImportUnwritableDestinationTest extends TestCase
 {
@@ -84,10 +82,9 @@ final class ImportUnwritableDestinationTest extends TestCase
     }
 
     /**
-     * O caso que motivou a mudança: destino impossível devolve null com o
-     * motivo, em vez de lançar. Um componente de caminho que é ARQUIVO
-     * derruba mkdir e fopen em qualquer plataforma, sem depender de chmod
-     * (que é no-op no Windows).
+     * Destino impossível devolve null com o motivo, em vez de lançar. Um
+     * componente do caminho que é ARQUIVO derruba mkdir e fopen em qualquer
+     * plataforma, sem depender de chmod (no-op no Windows).
      */
     public function test_openDestination_returns_null_with_reason_when_write_is_impossible(): void
     {
