@@ -59,6 +59,10 @@ class ArchiveReader
     /** Has the secretstream pull seen a FINAL tag? */
     private bool $streamExhausted = false;
 
+    /**
+     * @param resource $fh
+     * @param array<string, mixed> $meta
+     */
     private function __construct($fh, bool $encrypted, array $meta, int $bodyStart)
     {
         $this->fh = $fh;

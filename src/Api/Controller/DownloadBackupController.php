@@ -3,7 +3,6 @@
 namespace Ramon\Backup\Api\Controller;
 
 use Flarum\Foundation\ValidationException;
-use Laminas\Diactoros\Response\EmptyResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -73,11 +72,6 @@ class DownloadBackupController implements RequestHandlerInterface
         $range = $this->parseRange($request->getHeaderLine('Range'), $size);
 
         $this->emitFile($abs, $size, $range, $backup->filename);
-
-        // Unreachable in practice (emitFile() exits). Returning a
-        // bare empty response keeps the type contract honest in
-        // case a test harness ever calls this without the SAPI.
-        return new EmptyResponse(200);
     }
 
     /**

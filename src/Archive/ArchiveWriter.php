@@ -41,6 +41,7 @@ class ArchiveWriter
 
     private bool $finalized = false;
 
+    /** @param resource $fh */
     private function __construct($fh, bool $encrypted)
     {
         $this->fh = $fh;
@@ -138,6 +139,8 @@ class ArchiveWriter
      * Convenience: stream a resource into a single entry from start to
      * finish. Use this only when the caller is sure the work fits in
      * one tick.
+     *
+     * @param resource $source
      */
     public function writeEntryFromStream(string $name, int $type, $source, int $length): void
     {
@@ -245,6 +248,10 @@ class ArchiveWriter
         }
     }
 
+    /**
+     * @param resource $fh
+     * @param array<string, mixed> $meta
+     */
     private static function writeFileHeader($fh, array $meta, bool $encrypted): void
     {
         $json = json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -264,6 +271,7 @@ class ArchiveWriter
         }
     }
 
+    /** @return resource */
     private static function openForCreate(string $path)
     {
         $fh = @fopen($path, 'wb');
@@ -273,6 +281,7 @@ class ArchiveWriter
         return $fh;
     }
 
+    /** @return resource */
     private static function openForAppend(string $path)
     {
         $fh = @fopen($path, 'ab');

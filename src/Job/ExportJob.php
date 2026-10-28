@@ -97,6 +97,9 @@ class ExportJob
         protected Config $config,
         protected Inventory $inventory
     ) {
+        if (! $db instanceof Connection) {
+            throw new RuntimeException('Unsupported database connection.');
+        }
         $this->db = $db;
     }
 
@@ -887,7 +890,7 @@ class ExportJob
      * whose basename is in PRUNE_DIR_NAMES (node_modules, .git, etc.) or
      * whose absolute path appears in $skipDirs.
      *
-     * @param array<string, array{name: string, absolute: string, size: int}> $files
+     * @param list<array{name: string, absolute: string, size: int}> $files
      */
     private function collectFiles(string $base, string $logicalPrefix, array &$files, int &$totalBytes, array $skipDirs = []): void
     {

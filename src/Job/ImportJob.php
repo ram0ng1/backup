@@ -103,6 +103,9 @@ class ImportJob
         protected ProjectReconciler $project,
         protected SettingsPreserver $preserver
     ) {
+        if (! $db instanceof Connection) {
+            throw new RuntimeException('Unsupported database connection.');
+        }
         $this->db = $db;
     }
 
@@ -1411,7 +1414,7 @@ class ImportJob
 
         $root = substr($name, 0, $slash);
         $rest = substr($name, $slash + 1);
-        if ($rest === '' || $rest === false) return null;
+        if ($rest === '') return null;
 
         if ($root === 'extensions') {
             // For an entry like "extensions/<id>/<inner>", look up
@@ -1421,7 +1424,7 @@ class ImportJob
             if ($cut === false) return null;
             $extId = substr($rest, 0, $cut);
             $inner = substr($rest, $cut + 1);
-            if ($inner === '' || $inner === false) return null;
+            if ($inner === '') return null;
 
             $map = $this->extensionDestinationMap($state);
             $base = $map[$extId] ?? null;
