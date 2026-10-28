@@ -705,6 +705,8 @@ class ImportJob
         );
 
         if ($offset >= $size) {
+            // O epílogo do dump já religou a checagem de FK.
+            DatabaseRestorer::disableForeignKeys($this->db);
             $progress['restored_statements'] += $this->runDeferred($deferredPath);
             $state->set('progress', $progress);
             @unlink($deferredPath);
