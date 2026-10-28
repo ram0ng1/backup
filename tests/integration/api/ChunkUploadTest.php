@@ -80,7 +80,7 @@ class ChunkUploadTest extends TestCase
 
         $this->assertEquals(200, $first->getStatusCode(), (string) $first->getBody());
         $this->assertSame(['received' => 10, 'expected' => 10], json_decode((string) $second->getBody(), true));
-        $this->assertSame('0123456789', file_get_contents($this->staged($jobId)));
+        $this->assertSame('0123456789', file_get_contents($this->staged($jobId))); /* arquivo de staging do teste, sem URL; nosemgrep: flarum-v2-server-side-fetch */
 
         $this->send($this->request('DELETE', "/api/backup/imports/$jobId", ['authenticatedAs' => 1]));
     }

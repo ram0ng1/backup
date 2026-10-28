@@ -25,6 +25,7 @@ use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * Pela web cada tick tem o tempo de uma requisição. Uma entrada grande (o
@@ -52,7 +53,7 @@ final class ExtractTickBudgetTest extends TestCase
     protected function tearDown(): void
     {
         Mockery::close();
-        exec('rm -rf '.escapeshellarg($this->workdir));
+        TempDir::remove($this->workdir);
     }
 
     public function test_entradas_grandes_se_espalham_pelos_ticks_sem_duplicar(): void
@@ -83,7 +84,7 @@ final class ExtractTickBudgetTest extends TestCase
         $ticks = 0;
         $replayed = false;
         while ($state->get('phase') === 'extract' && $ticks < 50) {
-            $before = (string) file_get_contents($state->file());
+            $before = (string) file_get_contents($state->file()); /* job.json do próprio teste, sem URL; nosemgrep: flarum-v2-server-side-fetch */
             $job->runTick($state);
             $ticks++;
 

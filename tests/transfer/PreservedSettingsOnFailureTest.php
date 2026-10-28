@@ -26,6 +26,7 @@ use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * Um restore que falha no meio já trocou a tabela settings pela da origem.
@@ -40,7 +41,7 @@ final class PreservedSettingsOnFailureTest extends TestCase
     {
         Mockery::close();
         if (isset($this->workdir)) {
-            exec('rm -rf '.escapeshellarg($this->workdir));
+            TempDir::remove($this->workdir);
         }
     }
 

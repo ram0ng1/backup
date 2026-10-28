@@ -30,6 +30,7 @@ use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * Fórum em SQLite com o banco dentro de storage/ (o caminho comum).
@@ -75,7 +76,7 @@ final class LiveSqliteFileTest extends TestCase
     protected function tearDown(): void
     {
         Mockery::close();
-        exec('rm -rf '.escapeshellarg($this->workdir));
+        TempDir::remove($this->workdir);
     }
 
     public function test_export_de_storage_nao_leva_o_banco_sqlite_vivo(): void

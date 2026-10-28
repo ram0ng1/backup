@@ -27,6 +27,7 @@ use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
 use Ramon\Backup\Tests\Support\Fixture;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * O diretório do job sobrevive ao fim do job (até o painel ou a limpeza
@@ -82,7 +83,7 @@ final class JobSecretsTest extends TestCase
     {
         Mockery::close();
         if (isset($this->workdir)) {
-            exec('rm -rf '.escapeshellarg($this->workdir));
+            TempDir::remove($this->workdir);
         }
     }
 
@@ -122,7 +123,7 @@ final class JobSecretsTest extends TestCase
     /** @return array<string, mixed> */
     private function onDisk(JobState $state): array
     {
-        return json_decode((string) file_get_contents($state->file()), true);
+        return json_decode((string) file_get_contents($state->file()), true); /* job.json do próprio teste, sem URL; nosemgrep: flarum-v2-server-side-fetch */
     }
 
     private function drive(ExportJob|ImportJob $job, JobState $state): void

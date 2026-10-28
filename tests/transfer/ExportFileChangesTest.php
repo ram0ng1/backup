@@ -27,6 +27,7 @@ use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * Arquivos mudam enquanto o export anda: log que gira, sessão regravada,
@@ -71,7 +72,7 @@ final class ExportFileChangesTest extends TestCase
     protected function tearDown(): void
     {
         Mockery::close();
-        exec('rm -rf '.escapeshellarg($this->workdir));
+        TempDir::remove($this->workdir);
     }
 
     /** @return array<string, array{string}> */

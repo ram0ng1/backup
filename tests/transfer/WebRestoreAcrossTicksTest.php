@@ -31,6 +31,7 @@ use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
+use Ramon\Backup\Tests\Support\TempDir;
 
 /**
  * Restore pela web: cada tick é uma requisição nova, que precisa iniciar o
@@ -51,7 +52,7 @@ final class WebRestoreAcrossTicksTest extends TestCase
     protected function tearDown(): void
     {
         Mockery::close();
-        exec('rm -rf '.escapeshellarg($this->workdir));
+        TempDir::remove($this->workdir);
     }
 
     #[DataProvider('targets')]
