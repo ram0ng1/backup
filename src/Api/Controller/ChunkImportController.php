@@ -16,6 +16,7 @@ use Laminas\Diactoros\Response\JsonResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -36,7 +37,8 @@ class ChunkImportController implements RequestHandlerInterface
     private const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -46,13 +48,13 @@ class ChunkImportController implements RequestHandlerInterface
 
         $jobId = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $jobId)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $offsetHeader = trim($request->getHeaderLine('X-Chunk-Offset'));
         if ($offsetHeader === '' || ! preg_match('/^\d+$/', $offsetHeader)) {
             throw new ValidationException([
-                'chunk' => 'Missing or invalid X-Chunk-Offset header.',
+                'chunk' => $this->messages->get('errors.bad_offset_header'),
             ]);
         }
         $offset = (int) $offsetHeader;
@@ -63,7 +65,7 @@ class ChunkImportController implements RequestHandlerInterface
 
         if (! is_file($dest)) {
             throw new ValidationException([
-                'chunk' => 'Upload session not initialised — call POST /backup/imports first.',
+                'chunk' => $this->messages->get('errors.upload_not_initialised'),
             ]);
         }
 
@@ -72,7 +74,7 @@ class ChunkImportController implements RequestHandlerInterface
         // abaixo grava bytes reais até o offset, antes de ler o corpo.
         if ($expected <= 0 || $offset >= $expected) {
             throw new ValidationException([
-                'chunk' => 'Chunk offset is outside the declared upload size.',
+                'chunk' => $this->messages->get('errors.offset_out_of_range'),
             ]);
         }
 
@@ -82,19 +84,19 @@ class ChunkImportController implements RequestHandlerInterface
 
         if ($this->ensureFileSize($dest, $offset) === false) {
             throw new ValidationException([
-                'chunk' => 'Failed to position staging file at offset '.$offset.'.',
+                'chunk' => $this->messages->get('errors.seek_failed', ['offset' => $offset]),
             ]);
         }
 
         $fh = @fopen($dest, 'cb'); // 'c' não trunca o arquivo
         if ($fh === false) {
-            throw new ValidationException(['chunk' => 'Could not open staging file.']);
+            throw new ValidationException(['chunk' => $this->messages->get('errors.open_staging_failed')]);
         }
 
         try {
             if (fseek($fh, $offset) !== 0) {
                 throw new ValidationException([
-                    'chunk' => 'Failed to seek to offset '.$offset.' in staging file.',
+                    'chunk' => $this->messages->get('errors.seek_failed', ['offset' => $offset]),
                 ]);
             }
 
@@ -106,22 +108,19 @@ class ChunkImportController implements RequestHandlerInterface
                 $written += strlen($piece);
                 if ($written > self::MAX_CHUNK_BYTES) {
                     throw new ValidationException([
-                        'chunk' => sprintf(
-                            'Chunk exceeds per-request limit (%d bytes).',
-                            self::MAX_CHUNK_BYTES
-                        ),
+                        'chunk' => $this->messages->get('errors.chunk_too_large', ['max' => self::MAX_CHUNK_BYTES]),
                     ]);
                 }
                 if ($offset + $written > $expected) {
                     throw new ValidationException([
-                        'chunk' => 'Chunk would write past the declared upload size.',
+                        'chunk' => $this->messages->get('errors.chunk_past_end'),
                     ]);
                 }
 
                 $bytes = fwrite($fh, $piece);
                 if ($bytes === false || $bytes !== strlen($piece)) {
                     throw new ValidationException([
-                        'chunk' => 'Write failed at offset '.($offset + $written - strlen($piece)).' — disk full?',
+                        'chunk' => $this->messages->get('errors.write_failed', ['offset' => $offset + $written - strlen($piece)]),
                     ]);
                 }
             }

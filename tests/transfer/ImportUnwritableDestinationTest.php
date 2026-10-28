@@ -165,7 +165,7 @@ final class ImportUnwritableDestinationTest extends TestCase
         $warnings = (array) $state->get('warnings');
         $this->assertCount(1, $warnings);
         $this->assertStringContainsString($vendor, (string) $warnings[0]);
-        $this->assertStringContainsString('permissão de escrita', (string) $warnings[0]);
+        $this->assertStringContainsString('No write permission', (string) $warnings[0]);
     }
 
     private function rrmdir(string $dir): void

@@ -11,6 +11,8 @@
 
 namespace Ramon\Backup\Environment;
 
+use Ramon\Backup\Locale\Messages;
+
 /**
  * Versão do PHP e extensões em que o backup foi gerado, gravadas no
  * cabeçalho pelo export e conferidas pelo import ANTES de qualquer escrita.
@@ -82,38 +84,22 @@ class StackSnapshot
      * @param array<string, mixed> $meta
      * @param list<string>|null $hereExtensions
      */
-    public static function blockingReason(array $meta, ?array $hereExtensions = null): ?string
+    public static function blockingReason(array $meta, ?array $hereExtensions = null, ?Messages $messages = null): ?string
     {
+        $messages ??= new Messages();
         $source = self::sourceMinor($meta);
         $here   = self::minor(PHP_VERSION);
 
         if ($source !== '' && $here !== '' && version_compare($here, $source, '<')) {
-            return sprintf(
-                'Backup gerado em PHP %s; este servidor roda PHP %s. Não é possível continuar: '
-                .'o código que o arquivo carrega (vendor/, extensões e o composer.lock que as '
-                .'resolveu) foi montado para PHP %s e pode usar sintaxe que o parser do PHP %s '
-                .'recusa — a restauração deixaria o Flarum sem subir. Atualize este servidor '
-                .'para PHP %s ou superior, ou gere o backup a partir de uma instalação em PHP %s.',
-                $source,
-                $here,
-                $source,
-                $here,
-                $source,
-                $here
-            );
+            return $messages->get('stack.php_too_old', ['source' => $source, 'here' => $here]);
         }
 
         $missing = self::missingCriticalExtensions($meta, $hereExtensions);
         if ($missing !== []) {
-            return sprintf(
-                'Não é possível continuar: este servidor não tem %s que a origem do backup '
-                .'tinha — %s. Sem %s o Flarum não sobe depois da restauração. Habilite-%s no '
-                .'PHP deste servidor e tente novamente.',
-                count($missing) === 1 ? 'uma extensão PHP obrigatória' : 'extensões PHP obrigatórias',
-                implode(', ', $missing),
-                count($missing) === 1 ? 'ela' : 'elas',
-                count($missing) === 1 ? 'a' : 'as'
-            );
+            return $messages->get('stack.missing_extensions', [
+                'count'      => count($missing),
+                'extensions' => implode(', ', $missing),
+            ]);
         }
 
         return null;
@@ -161,7 +147,7 @@ class StackSnapshot
      * @param array<string, mixed> $meta
      * @return list<string>
      */
-    public static function advisories(array $meta): array
+    public static function advisories(array $meta, ?Messages $messages = null): array
     {
         $source = self::sourceMinor($meta);
         $here   = self::minor(PHP_VERSION);
@@ -170,13 +156,7 @@ class StackSnapshot
             return [];
         }
 
-        return [sprintf(
-            'O composer.lock deste backup foi resolvido em PHP %s e este servidor roda PHP %s. '
-            .'Rode `composer update` na raiz da instalação para reresolver as dependências '
-            .'para a versão local.',
-            $source,
-            $here
-        )];
+        return [($messages ?? new Messages())->get('stack.composer_update', ['source' => $source, 'here' => $here])];
     }
 
     /**

@@ -16,6 +16,7 @@ use Laminas\Diactoros\Response\EmptyResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -28,7 +29,8 @@ class CancelExportController implements RequestHandlerInterface
     use AdminOnlyController;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -38,7 +40,7 @@ class CancelExportController implements RequestHandlerInterface
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $id)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $dir = $this->paths->exportJobDir($id);

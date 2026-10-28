@@ -15,6 +15,7 @@ use Flarum\Foundation\ValidationException;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
 
@@ -35,7 +36,8 @@ class DownloadBackupController implements RequestHandlerInterface
     private const STREAM_CHUNK_BYTES = 8 * 1024 * 1024;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -47,14 +49,14 @@ class DownloadBackupController implements RequestHandlerInterface
         $backup = Backup::query()->find($id);
 
         if (! $backup) {
-            throw new ValidationException(['id' => 'Backup not found.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.backup_not_found')]);
         }
 
         $abs = $this->paths->backupFilePath($backup->filename);
         if ($abs === null || ! is_file($abs)) {
             // Genérico de propósito: não expor caminho nem filename ao cliente.
             throw new ValidationException([
-                'file' => 'Backup file is not available.',
+                'file' => $this->messages->get('errors.file_unavailable'),
             ]);
         }
 

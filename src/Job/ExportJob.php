@@ -22,6 +22,7 @@ use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\Extensions\Inventory;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Models\Backup;
 use Ramon\Backup\StoragePaths;
 use RuntimeException;
@@ -71,18 +72,22 @@ class ExportJob
      */
     protected Connection $db;
 
+    protected Messages $messages;
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
         ConnectionInterface $db,
         protected BackupCipher $cipher,
         protected Config $config,
-        protected Inventory $inventory
+        protected Inventory $inventory,
+        ?Messages $messages = null
     ) {
         if (! $db instanceof Connection) {
             throw new RuntimeException('Unsupported database connection.');
         }
         $this->db = $db;
+        $this->messages = $messages ?? new Messages();
     }
 
     /**
@@ -120,7 +125,7 @@ class ExportJob
             'created_by'    => $userId,
             'started_at'    => time(),
             'phase'         => 'scan',
-            'message'       => 'Preparing…',
+            'message'       => $this->messages->get('export.preparing'),
             'contents'      => [
                 'db'         => ! empty($contents['db']),
                 'assets'     => ! empty($contents['assets']),
@@ -193,7 +198,7 @@ class ExportJob
             @unlink((string) ($state->get('paths')['archive'] ?? ''));
             $state->forgetBinary();
             $state->set('phase', 'error');
-            $state->set('message', 'Error: '.$e->getMessage());
+            $state->set('message', $this->messages->get('error', ['message' => $e->getMessage()]));
             $state->save();
         }
 
@@ -226,7 +231,7 @@ class ExportJob
             $progress['total_bytes'] = (int) $scan['bytes'];
             $state->set('progress', $progress);
 
-            $state->set('message', sprintf('Scanning… (%d/%d)', $idx + 1, count($targets)));
+            $state->set('message', $this->messages->get('export.scanning', ['current' => $idx + 1, 'total' => count($targets)]));
             $state->save();
             return; // continua em 'scan'
         }
@@ -427,7 +432,7 @@ class ExportJob
         $state->set('progress', $progress);
 
         $state->set('phase', ! empty($contents['db']) ? 'db_dump' : 'bundle');
-        $state->set('message', ! empty($contents['db']) ? 'Dumping database…' : 'Bundling files…');
+        $state->set('message', $this->messages->get(! empty($contents['db']) ? 'export.dumping' : 'export.bundling'));
         $state->save();
     }
 
@@ -509,7 +514,7 @@ class ExportJob
         $state->set('db_warnings', $merged);
 
         if ($allTablesDone) {
-            $state->set('message', 'Database dump complete. Bundling…');
+            $state->set('message', $this->messages->get('export.dump_complete'));
         } else {
             $tableCount = count($cursor['tables']);
             $idx        = (int) $cursor['table_idx'];
@@ -518,16 +523,15 @@ class ExportJob
             $rowsTotal  = (int) ($cursor['table_total'] ?? 0);
 
             $rows = $rowsTotal > 0
-                ? number_format($rowsDone) . '/' . number_format($rowsTotal) . ' rows'
-                : number_format($rowsDone) . ' rows';
+                ? $this->messages->get('export.rows_of', ['done' => $rowsDone, 'total' => $rowsTotal])
+                : $this->messages->get('export.rows', ['done' => $rowsDone]);
 
-            $state->set('message', sprintf(
-                'Dumping database… table %d/%d (%s) — %s',
-                $idx + 1,
-                $tableCount,
-                $name,
-                $rows
-            ));
+            $state->set('message', $this->messages->get('export.dumping_table', [
+                'current' => $idx + 1,
+                'total'   => $tableCount,
+                'table'   => $name,
+                'rows'    => $rows,
+            ]));
         }
 
         // Progresso estruturado para o painel não depender da mensagem.
@@ -671,8 +675,11 @@ class ExportJob
         $state->set('progress', $progress);
         $state->set('message',
             $cursor['bundle_step'] === 'done'
-                ? 'Finalising…'
-                : 'Bundling files… '.$progress['processed_files'].'/'.$progress['total_files']
+                ? $this->messages->get('export.finalising')
+                : $this->messages->get('export.bundling_files', [
+                    'done'  => $progress['processed_files'],
+                    'total' => $progress['total_files'],
+                ])
         );
 
         if ($cursor['bundle_step'] === 'done') {
@@ -720,7 +727,7 @@ class ExportJob
 
         $state->forgetBinary();
         $state->set('phase', 'done');
-        $state->set('message', 'Backup complete.');
+        $state->set('message', $this->messages->get('export.complete'));
         $state->set('result', [
             'backup_id' => (int) $row->id,
             'filename'  => $finalName,
@@ -803,7 +810,7 @@ class ExportJob
     private function noteChangedFile(JobState $state, string $name): void
     {
         $warnings = (array) $state->get('db_warnings', []);
-        $warnings[] = sprintf('%s changed while the backup was running; the missing bytes were filled with zeros.', $name);
+        $warnings[] = $this->messages->get('export.file_changed', ['file' => $name]);
         $state->set('db_warnings', array_values(array_unique(array_map('strval', $warnings))));
     }
 

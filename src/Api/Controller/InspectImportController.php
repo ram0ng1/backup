@@ -19,6 +19,7 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Archive\ArchiveMeta;
 use Ramon\Backup\Archive\ArchiveReader;
 use Ramon\Backup\Environment\StackSnapshot;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -32,7 +33,8 @@ class InspectImportController implements RequestHandlerInterface
     use AdminOnlyController;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -42,7 +44,7 @@ class InspectImportController implements RequestHandlerInterface
 
         $jobId = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $jobId)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $dir  = $this->paths->importJobDir($jobId);
@@ -50,7 +52,7 @@ class InspectImportController implements RequestHandlerInterface
 
         if (! is_file($dest)) {
             throw new ValidationException([
-                'archive' => 'Upload session not initialised or already cleaned up.',
+                'archive' => $this->messages->get('errors.upload_gone'),
             ]);
         }
 
@@ -60,10 +62,7 @@ class InspectImportController implements RequestHandlerInterface
 
         if ($expected > 0 && $actual < $expected) {
             throw new ValidationException([
-                'archive' => sprintf(
-                    'Upload incomplete: %d / %d bytes received. Re-send missing chunks before inspect.',
-                    $actual, $expected
-                ),
+                'archive' => $this->messages->get('errors.upload_incomplete', ['received' => $actual, 'expected' => $expected]),
             ]);
         }
 
@@ -75,14 +74,14 @@ class InspectImportController implements RequestHandlerInterface
         } catch (\Throwable $e) {
             $this->paths->deleteDir($dir);
             throw new ValidationException([
-                'archive' => 'Not a valid Flarum backup: '.$e->getMessage(),
+                'archive' => $this->messages->get('errors.invalid_archive', ['error' => $e->getMessage()]),
             ]);
         }
 
         // Barra aqui o stack incompatível, antes da confirmação; o ImportJob
         // checa de novo para CLI e chamadas diretas. O upload fica para não
         // precisar reenviar após atualizar o PHP; o prune limpa depois.
-        $blocking = StackSnapshot::blockingReason($archiveMeta);
+        $blocking = StackSnapshot::blockingReason($archiveMeta, null, $this->messages);
         if ($blocking !== null) {
             throw new ValidationException(['archive' => $blocking]);
         }
@@ -92,7 +91,7 @@ class InspectImportController implements RequestHandlerInterface
             'is_encrypted' => $isEncrypted,
             'meta'         => ArchiveMeta::forDisplay($archiveMeta),
             'size'         => $actual,
-            'advisories'   => StackSnapshot::advisories($archiveMeta),
+            'advisories'   => StackSnapshot::advisories($archiveMeta, $this->messages),
         ]);
     }
 

@@ -18,6 +18,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Job\ImportJob;
+use Ramon\Backup\Locale\Messages;
 
 /**
  * POST /api/backup/imports/{id}/start
@@ -30,7 +31,8 @@ class StartImportController implements RequestHandlerInterface
     use AdminOnlyController;
 
     public function __construct(
-        protected ImportJob $job
+        protected ImportJob $job,
+        protected Messages $messages
     ) {
     }
 
@@ -41,7 +43,7 @@ class StartImportController implements RequestHandlerInterface
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $id)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $body = (array) $request->getParsedBody();
@@ -50,7 +52,7 @@ class StartImportController implements RequestHandlerInterface
 
         if (! $confirmReplace) {
             throw new ValidationException([
-                'confirm_replace' => 'You must confirm that this will replace existing data.',
+                'confirm_replace' => $this->messages->get('errors.confirm_replace'),
             ]);
         }
 

@@ -21,6 +21,7 @@ use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseRestorer;
 use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Environment\StackSnapshot;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -65,6 +66,8 @@ class ImportJob
      */
     protected Connection $db;
 
+    protected Messages $messages;
+
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
@@ -72,12 +75,14 @@ class ImportJob
         protected BackupCipher $cipher,
         protected Config $config,
         protected ProjectReconciler $project,
-        protected SettingsPreserver $preserver
+        protected SettingsPreserver $preserver,
+        ?Messages $messages = null
     ) {
         if (! $db instanceof Connection) {
             throw new RuntimeException('Unsupported database connection.');
         }
         $this->db = $db;
+        $this->messages = $messages ?? new Messages();
     }
 
     /** Null ou vazio limpa a chave. */
@@ -114,7 +119,7 @@ class ImportJob
             'created_by'    => $userId,
             'started_at'    => time(),
             'phase'         => 'inspect',
-            'message'       => 'Inspecting archive…',
+            'message'       => $this->messages->get('import.inspecting'),
             'paths'         => [
                 'dir'     => $dir,
                 'archive' => $upload,
@@ -193,7 +198,7 @@ class ImportJob
             @unlink($this->deferredDumpPath($state));
             $state->forgetBinary();
             $state->set('phase', 'error');
-            $state->set('message', 'Error: '.$e->getMessage());
+            $state->set('message', $this->messages->get('error', ['message' => $e->getMessage()]));
             $state->save();
         }
 
@@ -220,12 +225,12 @@ class ImportJob
             // antigo (vendor/ e composer.lock foram resolvidos para ele).
             // Vale até para restore só de banco, que reativa extensões via
             // `extensions_enabled`.
-            $blocking = StackSnapshot::blockingReason($meta);
+            $blocking = StackSnapshot::blockingReason($meta, null, $this->messages);
             if ($blocking !== null) {
                 throw new RuntimeException($blocking);
             }
 
-            $advisories = StackSnapshot::advisories($meta);
+            $advisories = StackSnapshot::advisories($meta, $this->messages);
             if ($advisories !== []) {
                 $state->set('warnings', array_values(array_unique(array_merge(
                     (array) $state->get('warnings', []),
@@ -259,7 +264,7 @@ class ImportJob
         }
 
         $state->set('phase', 'extract');
-        $state->set('message', 'Extracting…');
+        $state->set('message', $this->messages->get('import.extracting'));
         $state->save();
     }
 
@@ -435,8 +440,8 @@ class ImportJob
         $state->set('progress', $progress);
         $state->set('message',
             $cursor['extract_done']
-                ? 'Reconciling project files…'
-                : 'Extracting… '.$progress['extracted_entries'].' entries'
+                ? $this->messages->get('import.reconciling')
+                : $this->messages->get('import.extracting_entries', ['count' => $progress['extracted_entries']])
         );
 
         if ($cursor['extract_done']) {
@@ -472,8 +477,7 @@ class ImportJob
             $state->set('project_applied', array_values($result['applied']));
         } catch (Throwable $e) {
             $this->addWarnings($state, [
-                'Falha ao reconciliar os arquivos da raiz do projeto: '.$e->getMessage()
-                .'. O composer.json e o extend.php deste servidor ficaram como estavam.',
+                $this->messages->get('import.reconcile_failed', ['error' => $e->getMessage()]),
             ]);
         }
 
@@ -481,7 +485,7 @@ class ImportJob
 
         $hasDump = is_file($paths['dump']) && filesize($paths['dump']) > 0;
         $state->set('phase', $hasDump ? 'restore' : 'rewrite');
-        $state->set('message', $hasDump ? 'Restoring database…' : 'Rewriting URLs…');
+        $state->set('message', $this->messages->get($hasDump ? 'import.restoring' : 'import.rewriting'));
         $state->save();
     }
 
@@ -547,8 +551,7 @@ class ImportJob
             $restored = $this->preserver->reapply($snapshot);
         } catch (Throwable $e) {
             $this->addWarnings($state, [
-                'Não foi possível regravar a configuração deste servidor após o restore: '.$e->getMessage()
-                .'. Reveja SMTP, fila e integrações no painel.',
+                $this->messages->get('import.preserved_reapply_failed', ['error' => $e->getMessage()]),
             ]);
             return;
         }
@@ -563,12 +566,10 @@ class ImportJob
         }
 
         $state->set('preserved_settings_restored', count($restored));
-        $this->addWarnings($state, [sprintf(
-            '%d configuração(ões) deste servidor foram preservadas do backup (SMTP, fila, integrações). '
-            .'Ajuste a lista em `%s` se algo específico do seu ambiente ainda estiver sendo sobrescrito.',
-            count($restored),
-            SettingsPreserver::EXTRA_KEY
-        )]);
+        $this->addWarnings($state, [$this->messages->get('import.preserved_restored', [
+            'count' => count($restored),
+            'key'   => SettingsPreserver::EXTRA_KEY,
+        ])]);
     }
 
     /** Caminho do staging dos `project/*`, sem criar nada. */
@@ -700,8 +701,8 @@ class ImportJob
         $state->set('cursor', $cursor);
         $state->set('progress', $progress);
         $state->set('message', $offset >= $size
-            ? 'Database restored.'
-            : 'Restoring database… '.round($offset / max(1, $size) * 100, 1).'%'
+            ? $this->messages->get('import.restored')
+            : $this->messages->get('import.restoring_percent', ['percent' => round($offset / max(1, $size) * 100, 1)])
         );
 
         if ($offset >= $size) {
@@ -891,9 +892,9 @@ class ImportJob
             } catch (Throwable) { /* ignore */ }
 
             $state->set('rewrite_stats', $stats);
-            $state->set('message', 'Rewrote URL: '.$sourceUrl.' → '.$destUrl);
+            $state->set('message', $this->messages->get('import.rewrote_url', ['from' => $sourceUrl, 'to' => $destUrl]));
         } else {
-            $state->set('message', 'Skipping URL rewrite (URLs match or unknown).');
+            $state->set('message', $this->messages->get('import.skipping_rewrite'));
         }
 
         // Depois do REPLACE de propósito, para ter a última palavra.
@@ -918,15 +919,10 @@ class ImportJob
 
         if ($dangling !== []) {
             $state->set('boot_dangling_classes', array_values($dangling));
-            $this->addWarnings($state, [sprintf(
-                'BOOT EM RISCO: o extend.php da raiz referencia %s que o autoloader não resolve. '
-                .'O Flarum carrega esse arquivo antes do handler de erro, então isso derruba o fórum '
-                .'com HTTP 500 sem mensagem. Reinstale o pacote que fornece a classe ou comente o '
-                .'extender antes de recarregar.',
-                count($dangling) === 1
-                    ? 'a classe `'.$dangling[0].'`'
-                    : 'as classes `'.implode('`, `', array_slice($dangling, 0, 5)).'`'
-            )]);
+            $this->addWarnings($state, [$this->messages->get('import.boot_at_risk', [
+                'count'   => count($dangling),
+                'classes' => '`'.implode('`, `', array_slice($dangling, 0, 5)).'`',
+            ])]);
         }
 
         $state->set('phase', 'finalize');
@@ -976,7 +972,7 @@ class ImportJob
         if (! is_dir($dir)) {
             error_clear_last();
             if (! @mkdir($dir, 0755, true) && ! is_dir($dir)) {
-                $reason = $this->lastErrorMessage() ?? 'não foi possível criar '.$dir;
+                $reason = $this->lastErrorMessage() ?? $this->messages->get('import.mkdir_failed', ['dir' => $dir]);
                 return null;
             }
         }
@@ -984,7 +980,7 @@ class ImportJob
         error_clear_last();
         $fh = @fopen($dest, $mode);
         if ($fh === false) {
-            $reason = $this->lastErrorMessage() ?? 'fopen recusou o destino';
+            $reason = $this->lastErrorMessage() ?? $this->messages->get('import.fopen_failed');
             return null;
         }
 
@@ -1044,14 +1040,10 @@ class ImportJob
         }
 
         $paths = array_slice(array_keys($blocked), 0, 5);
-        $this->addWarning($state, sprintf(
-            'Sem permissão de escrita em %s (o PHP roda como `%s`). As entradas '
-            .'destinadas a esses caminhos NÃO serão gravadas — o banco, os assets e o '
-            .'storage continuam. Ajuste o dono/permissão desses diretórios e restaure '
-            .'de novo, ou desmarque Extensões e instale os pacotes pelo composer.',
-            implode(', ', $paths),
-            $this->processUser()
-        ));
+        $this->addWarning($state, $this->messages->get('import.unwritable_destination', [
+            'paths' => implode(', ', $paths),
+            'user'  => $this->processUser(),
+        ]));
     }
 
     /**
@@ -1127,14 +1119,10 @@ class ImportJob
                 fn ($n) => (string) $n,
                 array_slice(array_values((array) $state->get('unresolved_sample', [])), 0, 5)
             );
-            $warnings[] = sprintf(
-                'Restauração INCOMPLETA: %d entrada(s) selecionada(s) não pôde(ram) ser '
-                .'gravada(s) porque o destino não resolveu%s. Confira a integridade do '
-                .'arquivo e o manifesto de extensões antes de considerar esta migração '
-                .'concluída.',
-                $unresolved,
-                $sample === [] ? '' : ' — por exemplo: '.implode(', ', $sample)
-            );
+            $warnings[] = $this->messages->get('import.incomplete_unresolved', [
+                'count'  => $unresolved,
+                'sample' => $this->sampleSuffix($sample, ', '),
+            ]);
         }
 
         if ($unwritable > 0) {
@@ -1142,15 +1130,11 @@ class ImportJob
                 fn ($n) => (string) $n,
                 array_slice(array_values((array) $state->get('unwritable_sample', [])), 0, 5)
             );
-            $warnings[] = sprintf(
-                'Restauração INCOMPLETA: %d arquivo(s) não pôde(ram) ser gravado(s) pelo '
-                .'usuário `%s` do PHP%s. Corrija dono/permissão (ou espaço em disco) desses '
-                .'caminhos e restaure de novo — o banco de dados já foi aplicado, então '
-                .'basta repetir o restore com apenas Extensões marcado.',
-                $unwritable,
-                $this->processUser(),
-                $sample === [] ? '' : ' — por exemplo: '.implode('; ', $sample)
-            );
+            $warnings[] = $this->messages->get('import.incomplete_unwritable', [
+                'count'  => $unwritable,
+                'user'   => $this->processUser(),
+                'sample' => $this->sampleSuffix($sample, '; '),
+            ]);
         }
 
         $state->set('warnings', array_values(array_unique(array_map(
@@ -1163,12 +1147,25 @@ class ImportJob
         $state->set('incomplete', $unresolved > 0 || $unwritable > 0 || $dangling !== []);
         $state->set('phase', 'done');
         $state->set('message', match (true) {
-            $dangling !== [] => 'Restore finished — the root extend.php references classes that are not installed.',
-            $unwritable > 0  => sprintf('Restore finished — %d file(s) could not be written to disk.', $unwritable),
-            $unresolved > 0  => sprintf('Restore finished with %d unrestored entr%s.', $unresolved, $unresolved === 1 ? 'y' : 'ies'),
-            default          => 'Restore complete.',
+            $dangling !== [] => $this->messages->get('import.finished_dangling'),
+            $unwritable > 0  => $this->messages->get('import.finished_unwritable', ['count' => $unwritable]),
+            $unresolved > 0  => $this->messages->get('import.finished_unresolved', ['count' => $unresolved]),
+            default          => $this->messages->get('import.complete'),
         });
         $state->save();
+    }
+
+    /**
+     * Complemento " — por exemplo: a, b" dos avisos de restauração
+     * incompleta; vazio quando não há amostra.
+     *
+     * @param list<string> $sample
+     */
+    private function sampleSuffix(array $sample, string $glue): string
+    {
+        return $sample === []
+            ? ''
+            : $this->messages->get('for_example', ['items' => implode($glue, $sample)]);
     }
 
     /**

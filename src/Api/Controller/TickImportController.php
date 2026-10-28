@@ -18,6 +18,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -31,7 +32,8 @@ class TickImportController implements RequestHandlerInterface
 
     public function __construct(
         protected ImportJob $job,
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -41,12 +43,12 @@ class TickImportController implements RequestHandlerInterface
 
         $id = (string) ($request->getQueryParams()['id'] ?? '');
         if (! preg_match('/^[a-f0-9]{16}$/', $id)) {
-            throw new ValidationException(['id' => 'Invalid job id.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.invalid_job')]);
         }
 
         $stateFile = $this->paths->importJobDir($id).DIRECTORY_SEPARATOR.'job.json';
         if (! is_file($stateFile)) {
-            throw new ValidationException(['id' => 'Import job not found.']);
+            throw new ValidationException(['id' => $this->messages->get('errors.import_not_found')]);
         }
 
         // A chave privada nunca vai para o disco: o cliente a reenvia a

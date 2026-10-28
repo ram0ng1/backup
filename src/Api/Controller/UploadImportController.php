@@ -16,6 +16,7 @@ use Laminas\Diactoros\Response\JsonResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 
 /**
@@ -47,7 +48,8 @@ class UploadImportController implements RequestHandlerInterface
     public const MAX_TOTAL_BYTES = 8 * 1024 * 1024 * 1024;
 
     public function __construct(
-        protected StoragePaths $paths
+        protected StoragePaths $paths,
+        protected Messages $messages
     ) {
     }
 
@@ -61,17 +63,14 @@ class UploadImportController implements RequestHandlerInterface
         $size     = (int) ($body['size'] ?? 0);
 
         if ($filename !== '' && ! str_ends_with(strtolower($filename), '.flarum')) {
-            throw new ValidationException(['archive' => 'File must have a .flarum extension.']);
+            throw new ValidationException(['archive' => $this->messages->get('errors.bad_extension')]);
         }
         if ($size <= 0) {
-            throw new ValidationException(['archive' => 'Upload size must be greater than zero.']);
+            throw new ValidationException(['archive' => $this->messages->get('errors.empty_upload')]);
         }
         if ($size > self::MAX_TOTAL_BYTES) {
             throw new ValidationException([
-                'archive' => sprintf(
-                    'Upload exceeds the per-file ceiling (%d bytes > %d).',
-                    $size, self::MAX_TOTAL_BYTES
-                ),
+                'archive' => $this->messages->get('errors.upload_too_large', ['size' => $size, 'max' => self::MAX_TOTAL_BYTES]),
             ]);
         }
 
@@ -81,7 +80,7 @@ class UploadImportController implements RequestHandlerInterface
         if (! is_writable($dir)) {
             // Genérico de propósito: não expor o caminho absoluto ao cliente.
             throw new ValidationException([
-                'archive' => 'Staging directory is not writable.',
+                'archive' => $this->messages->get('errors.staging_not_writable'),
             ]);
         }
 
@@ -91,7 +90,7 @@ class UploadImportController implements RequestHandlerInterface
         // inspect recusar upload truncado.
         $fh = @fopen($dest, 'wb');
         if ($fh === false) {
-            throw new ValidationException(['archive' => 'Could not create staging file.']);
+            throw new ValidationException(['archive' => $this->messages->get('errors.staging_create_failed')]);
         }
         fclose($fh);
 

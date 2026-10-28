@@ -17,6 +17,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Ramon\Backup\Crypto\BackupCipher;
+use Ramon\Backup\Locale\Messages;
 
 /**
  * POST /api/backup/encryption/generate-keypair
@@ -31,7 +32,8 @@ class GenerateKeypairController implements RequestHandlerInterface
     use AdminOnlyController;
 
     public function __construct(
-        protected BackupCipher $cipher
+        protected BackupCipher $cipher,
+        protected Messages $messages
     ) {
     }
 
@@ -40,7 +42,7 @@ class GenerateKeypairController implements RequestHandlerInterface
         $this->assertAdmin($request);
 
         if (! $this->cipher->isAvailable()) {
-            throw new ValidationException(['encryption' => 'libsodium is not available on this server.']);
+            throw new ValidationException(['encryption' => $this->messages->get('errors.no_libsodium')]);
         }
 
         $body = (array) $request->getParsedBody();
@@ -49,7 +51,7 @@ class GenerateKeypairController implements RequestHandlerInterface
 
         if ($hasExisting && ! $acknowledged) {
             throw new ValidationException([
-                'acknowledge_loss' => 'Generating a new keypair will leave existing encrypted backups undecryptable on this server. Confirm to proceed.',
+                'acknowledge_loss' => $this->messages->get('errors.acknowledge_loss'),
             ]);
         }
 

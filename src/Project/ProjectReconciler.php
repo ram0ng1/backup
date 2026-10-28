@@ -12,6 +12,7 @@
 namespace Ramon\Backup\Project;
 
 use Flarum\Foundation\Paths;
+use Ramon\Backup\Locale\Messages;
 use Throwable;
 
 /**
@@ -36,9 +37,13 @@ class ProjectReconciler
     /** Seções do composer.json unidas no merge. */
     private const MERGED_MAPS = ['require', 'require-dev', 'conflict', 'replace', 'provide'];
 
+    protected Messages $messages;
+
     public function __construct(
-        protected Paths $appPaths
+        protected Paths $appPaths,
+        ?Messages $messages = null
     ) {
+        $this->messages = $messages ?? new Messages();
     }
 
     /**
@@ -81,7 +86,7 @@ class ProjectReconciler
         $incoming = $this->decodeJson($incomingPath);
         if ($incoming === null) {
             return [
-                'warnings' => ['O composer.json do arquivo não é JSON válido — manifesto do destino mantido intacto.'],
+                'warnings' => [$this->messages->get('project.incoming_invalid_json')],
                 'applied'  => [],
             ];
         }
@@ -98,7 +103,7 @@ class ProjectReconciler
         $current = $this->decodeJson($destPath);
         if ($current === null) {
             return [
-                'warnings' => ['O composer.json deste servidor não é JSON válido — merge abortado para não piorar o estado.'],
+                'warnings' => [$this->messages->get('project.local_invalid_json')],
                 'applied'  => [],
             ];
         }
@@ -121,7 +126,7 @@ class ProjectReconciler
         );
         if ($encoded === false) {
             return [
-                'warnings' => array_merge($warnings, ['Falha ao serializar o composer.json unido — manifesto do destino mantido intacto.']),
+                'warnings' => array_merge($warnings, [$this->messages->get('project.encode_failed')]),
                 'applied'  => [],
             ];
         }
@@ -129,14 +134,12 @@ class ProjectReconciler
         $this->backup($destPath);
         if (@file_put_contents($destPath, $encoded."\n", LOCK_EX) === false) {
             return [
-                'warnings' => array_merge($warnings, ['Não foi possível gravar o composer.json unido (permissão?).']),
+                'warnings' => array_merge($warnings, [$this->messages->get('project.write_failed')]),
                 'applied'  => [],
             ];
         }
 
-        $warnings[] = 'composer.json unido ao do destino (nada foi removido). '
-            .'O composer.lock do arquivo NÃO foi aplicado: um lock de outro servidor poda pacotes '
-            .'que só existem aqui. Rode `composer update --lock` para regravar o lock local.';
+        $warnings[] = $this->messages->get('project.merged');
 
         return ['warnings' => $warnings, 'applied' => ['composer.json']];
     }
@@ -162,7 +165,7 @@ class ProjectReconciler
         }
 
         return [
-            'warnings' => ['Servidor sem composer.json — manifesto e lock do arquivo aplicados verbatim. Rode `composer install`.'],
+            'warnings' => [$this->messages->get('project.fresh_manifest')],
             'applied'  => $applied,
         ];
     }
@@ -186,20 +189,16 @@ class ProjectReconciler
 
         $onlyHere = array_diff_key($here, $there);
         if ($onlyHere !== []) {
-            $warnings[] = sprintf(
-                'Pacotes que existem só neste servidor e NÃO estavam no backup (preservados pelo merge): %s. '
-                .'Confirme que o extend.php da raiz e as extensões restauradas continuam compatíveis com eles.',
-                $this->summarise(array_keys($onlyHere))
-            );
+            $warnings[] = $this->messages->get('project.only_here', [
+                'packages' => $this->summarise(array_keys($onlyHere)),
+            ]);
         }
 
         $onlyThere = array_diff_key($there, $here);
         if ($onlyThere !== []) {
-            $warnings[] = sprintf(
-                'Pacotes exigidos pelo backup e ausentes deste servidor: %s. '
-                .'Rode `composer install` para materializá-los antes de considerar a migração concluída.',
-                $this->summarise(array_keys($onlyThere))
-            );
+            $warnings[] = $this->messages->get('project.only_there', [
+                'packages' => $this->summarise(array_keys($onlyThere)),
+            ]);
         }
 
         return $warnings;
@@ -224,13 +223,13 @@ class ProjectReconciler
 
         if (! @copy($incoming, $destPath)) {
             return [
-                'warnings' => ['Não foi possível gravar o extend.php da raiz (permissão?).'],
+                'warnings' => [$this->messages->get('project.extend_write_failed')],
                 'applied'  => [],
             ];
         }
 
         return [
-            'warnings' => ['extend.php da raiz substituído pelo do backup (cópia do anterior salva como .bak-*).'],
+            'warnings' => [$this->messages->get('project.extend_replaced')],
             'applied'  => ['extend.php'],
         ];
     }
