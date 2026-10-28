@@ -73,6 +73,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
   // for admins who never use the feature.
   protected extensionsLoading = false;
   protected extensionsLoaded = false;
+  protected extensionsFailed = false;
   protected extensions: ExtensionEntry[] = [];
   protected extensionSelected: Record<string, boolean> = {};
 
@@ -234,6 +235,16 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
         </div>
       );
     }
+    if (this.extensionsFailed) {
+      return (
+        <p className="helpText BackupExport-extEmpty">
+          {trans('extensions_load_failed')}{' '}
+          <Button className="Button Button--link" onclick={() => this.loadExtensions()}>
+            {app.translator.trans('ramon-backup.admin.list.retry')}
+          </Button>
+        </p>
+      );
+    }
     if (!this.extensions.length) {
       return <p className="helpText BackupExport-extEmpty">{trans('extensions_none')}</p>;
     }
@@ -294,6 +305,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
 
   async loadExtensions() {
     this.extensionsLoading = true;
+    this.extensionsFailed = false;
     try {
       const res = await apiRequest<{ extensions: ExtensionEntry[] }>({
         method: 'GET',
@@ -306,6 +318,7 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
       // ones they don't want.
       for (const ext of this.extensions) this.extensionSelected[ext.id] = true;
     } catch (e) {
+      this.extensionsFailed = true;
       app.alerts.show({ type: 'error' }, errorDetail(e, String(trans('extensions_load_failed'))));
     } finally {
       this.extensionsLoading = false;
