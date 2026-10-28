@@ -168,10 +168,18 @@ class MysqlIntrospector implements SchemaIntrospector
             return [str_replace("''", "'", $inner), false];
         }
 
-        // Sem aspas no emitter: CURRENT_TIMESTAMP, não 'CURRENT_TIMESTAMP'.
+        // Sem aspas no emitter: CURRENT_TIMESTAMP, não 'CURRENT_TIMESTAMP'. O
+        // MariaDB escreve `current_timestamp()`, forma que o PostgreSQL e o
+        // SQLite recusam; todas viram a palavra-chave do padrão SQL.
         $upper = strtoupper($s);
-        if (in_array($upper, ['CURRENT_TIMESTAMP', 'NOW()', 'CURRENT_DATE', 'CURRENT_TIME'], true)) {
-            return [$upper, true];
+        if (preg_match('/\A(CURRENT_TIMESTAMP|NOW|LOCALTIMESTAMP)(\(\d*\))?\z/', $upper)) {
+            return ['CURRENT_TIMESTAMP', true];
+        }
+        if (preg_match('/\A(CURRENT_DATE|CURDATE)(\(\))?\z/', $upper)) {
+            return ['CURRENT_DATE', true];
+        }
+        if (preg_match('/\A(CURRENT_TIME|CURTIME)(\(\d*\))?\z/', $upper)) {
+            return ['CURRENT_TIME', true];
         }
 
         // MariaDB também traz `current_timestamp()` e aritmética sem aspas.
