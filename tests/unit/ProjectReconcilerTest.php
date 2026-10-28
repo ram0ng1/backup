@@ -13,6 +13,7 @@ namespace Ramon\Backup\Tests\unit;
 
 use Flarum\Foundation\Paths;
 use PHPUnit\Framework\TestCase;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 
 /**
@@ -44,7 +45,7 @@ final class ProjectReconcilerTest extends TestCase
             'base'    => $this->base,
             'public'  => $this->base,
             'storage' => $this->base,
-        ]));
+        ]), new Messages());
     }
 
     protected function tearDown(): void

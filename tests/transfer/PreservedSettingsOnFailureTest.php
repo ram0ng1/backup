@@ -21,6 +21,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Job\ImportJob;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -80,7 +81,7 @@ final class PreservedSettingsOnFailureTest extends TestCase
         $cipherSettings = Mockery::mock(\Flarum\Settings\SettingsRepositoryInterface::class);
         $cipherSettings->shouldReceive('get')->andReturn('');
         $config = new Config(['url' => 'http://localhost']);
-        $job = new ImportJob($storage, $paths, $db, new BackupCipher($cipherSettings, $config), $config, new ProjectReconciler($paths), new SettingsPreserver($settings));
+        $job = new ImportJob($storage, $paths, $db, new BackupCipher($cipherSettings, $config), $config, new ProjectReconciler($paths, new Messages()), new SettingsPreserver($settings), new Messages());
 
         $state = $job->start($jobId, null, true, null, null);
         for ($i = 0; $i < 50 && ! in_array($state->get('phase'), ['done', 'error'], true); $i++) {

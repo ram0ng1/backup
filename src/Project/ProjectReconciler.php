@@ -37,13 +37,10 @@ class ProjectReconciler
     /** Seções do composer.json unidas no merge. */
     private const MERGED_MAPS = ['require', 'require-dev', 'conflict', 'replace', 'provide'];
 
-    protected Messages $messages;
-
     public function __construct(
         protected Paths $appPaths,
-        ?Messages $messages = null
+        protected Messages $messages
     ) {
-        $this->messages = $messages ?? new Messages();
     }
 
     /**

@@ -25,6 +25,7 @@ use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\ImportJob;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Fixture;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -134,7 +135,8 @@ final class CliTransferE2ETest extends TestCase
             $source,
             $this->cipher(),
             $this->config,
-            $this->inventory()
+            $this->inventory(),
+            new Messages()
         );
         $exportTester = new CommandTester(new ExportCommand($exportJob, $this->storagePaths));
         $exportStatus = $exportTester->execute(['--db' => true]);
@@ -200,7 +202,8 @@ final class CliTransferE2ETest extends TestCase
             $source,
             $this->cipher(),
             $this->config,
-            $this->inventory()
+            $this->inventory(),
+            new Messages()
         );
         $exportId = bin2hex(random_bytes(8));
         $estate = $exportJob->start(
@@ -269,8 +272,9 @@ final class CliTransferE2ETest extends TestCase
             $target,
             $this->cipher(),
             $this->config,
-            new \Ramon\Backup\Project\ProjectReconciler($this->paths),
-            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+            new \Ramon\Backup\Project\ProjectReconciler($this->paths, new Messages()),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings),
+            new Messages()
         );
     }
 

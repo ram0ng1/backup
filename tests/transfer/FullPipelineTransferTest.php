@@ -23,6 +23,7 @@ use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 use Ramon\Backup\Tests\Support\Engines;
 use Ramon\Backup\Tests\Support\Fixture;
@@ -119,7 +120,8 @@ final class FullPipelineTransferTest extends TestCase
             $source,
             $this->cipher(),
             $this->config,
-            $this->inventory()
+            $this->inventory(),
+            new Messages()
         );
 
         $jobId = bin2hex(random_bytes(8));
@@ -202,8 +204,9 @@ final class FullPipelineTransferTest extends TestCase
             $target,
             $this->cipher(),
             $this->config,
-            new \Ramon\Backup\Project\ProjectReconciler($this->paths),
-            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+            new \Ramon\Backup\Project\ProjectReconciler($this->paths, new Messages()),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings),
+            new Messages()
         );
     }
 

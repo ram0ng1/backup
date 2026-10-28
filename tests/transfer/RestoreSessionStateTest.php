@@ -22,6 +22,7 @@ use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -167,8 +168,9 @@ final class RestoreSessionStateTest extends TestCase
                 Engines::freshConnection($target),
                 new BackupCipher($settings, $config),
                 $config,
-                new ProjectReconciler($paths),
-                new SettingsPreserver($settings)
+                new ProjectReconciler($paths, new Messages()),
+                new SettingsPreserver($settings),
+                new Messages()
             );
             $job->runTick($state);
         } while ($state->get('phase') === 'restore' && ++$ticks < 20);

@@ -26,6 +26,7 @@ use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Database\Dialect;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -176,7 +177,7 @@ final class WebRestoreAcrossTicksTest extends TestCase
         $settings->shouldReceive('get')->andReturn('');
         $settings->shouldReceive('all')->andReturn([]);
 
-        return new ImportJob(new StoragePaths($paths), $paths, $db, new BackupCipher($settings, $config), $config, new ProjectReconciler($paths), new SettingsPreserver($settings));
+        return new ImportJob(new StoragePaths($paths), $paths, $db, new BackupCipher($settings, $config), $config, new ProjectReconciler($paths, new Messages()), new SettingsPreserver($settings), new Messages());
     }
 }
 

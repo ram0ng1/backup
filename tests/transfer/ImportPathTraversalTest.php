@@ -20,6 +20,7 @@ use PHPUnit\Framework\TestCase;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\StoragePaths;
 use ReflectionMethod;
 
@@ -69,8 +70,9 @@ final class ImportPathTraversalTest extends TestCase
             $db,
             $cipher,
             $config,
-            new \Ramon\Backup\Project\ProjectReconciler($paths),
-            new \Ramon\Backup\Settings\SettingsPreserver($settings)
+            new \Ramon\Backup\Project\ProjectReconciler($paths, new Messages()),
+            new \Ramon\Backup\Settings\SettingsPreserver($settings),
+            new Messages()
         );
 
         // Desde o PHP 8.1 a reflection alcança métodos privados sem

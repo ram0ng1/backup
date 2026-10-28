@@ -21,6 +21,7 @@ use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -142,7 +143,7 @@ final class JobSecretsTest extends TestCase
 
     private function exportJob(): ExportJob
     {
-        return new ExportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), $this->cipher(), $this->config, new Inventory(Mockery::mock(\Flarum\Extension\ExtensionManager::class), $this->paths));
+        return new ExportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), $this->cipher(), $this->config, new Inventory(Mockery::mock(\Flarum\Extension\ExtensionManager::class), $this->paths), new Messages());
     }
 
     private function importJob(): ImportJob
@@ -151,6 +152,6 @@ final class JobSecretsTest extends TestCase
         $settings->shouldReceive('get')->andReturn('');
         $settings->shouldReceive('all')->andReturn([]);
 
-        return new ImportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), $this->cipher(), $this->config, new ProjectReconciler($this->paths), new SettingsPreserver($settings));
+        return new ImportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), $this->cipher(), $this->config, new ProjectReconciler($this->paths, new Messages()), new SettingsPreserver($settings), new Messages());
     }
 }

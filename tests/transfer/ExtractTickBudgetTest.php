@@ -20,6 +20,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -109,6 +110,6 @@ final class ExtractTickBudgetTest extends TestCase
         $settings->shouldReceive('all')->andReturn([]);
         $config = new Config(['url' => 'http://localhost']);
 
-        return new ImportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), new BackupCipher($settings, $config), $config, new ProjectReconciler($this->paths), new SettingsPreserver($settings));
+        return new ImportJob(new StoragePaths($this->paths), $this->paths, Engines::connection('sqlite'), new BackupCipher($settings, $config), $config, new ProjectReconciler($this->paths, new Messages()), new SettingsPreserver($settings), new Messages());
     }
 }

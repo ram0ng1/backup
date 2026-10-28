@@ -22,6 +22,7 @@ use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Job\ExportJob;
 use Ramon\Backup\Job\ImportJob;
 use Ramon\Backup\Job\JobState;
+use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
 use Ramon\Backup\Settings\SettingsPreserver;
 use Ramon\Backup\StoragePaths;
@@ -91,7 +92,7 @@ final class ExportFileChangesTest extends TestCase
         file_put_contents("$assets/c.txt", 'fim');
 
         $paths = $this->paths('src');
-        $job = new ExportJob(new StoragePaths($paths), $paths, Engines::connection('sqlite'), $this->cipher(), new Config(['url' => 'http://localhost']), new Inventory(Mockery::mock(\Flarum\Extension\ExtensionManager::class), $paths));
+        $job = new ExportJob(new StoragePaths($paths), $paths, Engines::connection('sqlite'), $this->cipher(), new Config(['url' => 'http://localhost']), new Inventory(Mockery::mock(\Flarum\Extension\ExtensionManager::class), $paths), new Messages());
         $state = $job->start(bin2hex(random_bytes(8)), ['db' => false, 'assets' => true, 'storage' => false, 'extensions' => false], ['enabled' => false], null, null);
 
         $changed = false;
@@ -116,7 +117,7 @@ final class ExportFileChangesTest extends TestCase
         $settings = Mockery::mock(\Flarum\Settings\SettingsRepositoryInterface::class);
         $settings->shouldReceive('get')->andReturn('');
         $settings->shouldReceive('all')->andReturn([]);
-        $import = new ImportJob($dstStorage, $dst, Engines::connection('sqlite'), $this->cipher(), new Config(['url' => 'http://localhost']), new ProjectReconciler($dst), new SettingsPreserver($settings));
+        $import = new ImportJob($dstStorage, $dst, Engines::connection('sqlite'), $this->cipher(), new Config(['url' => 'http://localhost']), new ProjectReconciler($dst, new Messages()), new SettingsPreserver($settings), new Messages());
         $state = $import->start($jobId, null, true, ['db' => false, 'assets' => true, 'storage' => false, 'extensions' => false], null);
         while (! in_array($state->get('phase'), ['done', 'error'], true)) {
             $import->runTick($state);

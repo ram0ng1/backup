@@ -66,8 +66,6 @@ class ImportJob
      */
     protected Connection $db;
 
-    protected Messages $messages;
-
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
@@ -76,13 +74,12 @@ class ImportJob
         protected Config $config,
         protected ProjectReconciler $project,
         protected SettingsPreserver $preserver,
-        ?Messages $messages = null
+        protected Messages $messages
     ) {
         if (! $db instanceof Connection) {
             throw new RuntimeException('Unsupported database connection.');
         }
         $this->db = $db;
-        $this->messages = $messages ?? new Messages();
     }
 
     /** Null ou vazio limpa a chave. */

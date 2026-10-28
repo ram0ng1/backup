@@ -72,8 +72,6 @@ class ExportJob
      */
     protected Connection $db;
 
-    protected Messages $messages;
-
     public function __construct(
         protected StoragePaths $paths,
         protected Paths $appPaths,
@@ -81,13 +79,12 @@ class ExportJob
         protected BackupCipher $cipher,
         protected Config $config,
         protected Inventory $inventory,
-        ?Messages $messages = null
+        protected Messages $messages
     ) {
         if (! $db instanceof Connection) {
             throw new RuntimeException('Unsupported database connection.');
         }
         $this->db = $db;
-        $this->messages = $messages ?? new Messages();
     }
 
     /**
