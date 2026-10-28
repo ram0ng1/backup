@@ -20,6 +20,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseDumper;
 use Ramon\Backup\Database\Dialect;
+use Ramon\Backup\Database\LiveDatabaseFiles;
 use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\Extensions\Inventory;
 use Ramon\Backup\Locale\Messages;
@@ -837,9 +838,11 @@ class ExportJob
         );
 
         $baseLen = strlen($base);
+        $liveDb  = array_flip(LiveDatabaseFiles::of($this->db));
         foreach ($iterator as $info) {
             /** @var \SplFileInfo $info */
             if (! $info->isFile()) continue;
+            if ($liveDb !== [] && isset($liveDb[LiveDatabaseFiles::normalise($info->getPathname())])) continue;
             $size = $info->getSize();
             if ($size === false || $size > self::FILE_SIZE_LIMIT) continue;
             $abs = $info->getPathname();

@@ -20,6 +20,7 @@ use Ramon\Backup\Archive\Format;
 use Ramon\Backup\Crypto\BackupCipher;
 use Ramon\Backup\Database\DatabaseRestorer;
 use Ramon\Backup\Database\Dialect;
+use Ramon\Backup\Database\LiveDatabaseFiles;
 use Ramon\Backup\Environment\StackSnapshot;
 use Ramon\Backup\Locale\Messages;
 use Ramon\Backup\Project\ProjectReconciler;
@@ -330,6 +331,13 @@ class ImportJob
                         $dest = ($accept && $entry['type'] === Format::TYPE_FILE)
                             ? $this->resolveDestination($entry['name'], $state)
                             : null;
+
+                        // Arquivo antigo pode trazer o .sqlite vivo da origem;
+                        // gravá-lo aqui corromperia o banco que o restore usa.
+                        if ($dest !== null && $this->isLiveDatabaseFile($dest)) {
+                            $accept = false;
+                            $dest   = null;
+                        }
 
                         $current = [
                             'name'        => $entry['name'],
@@ -1201,6 +1209,13 @@ class ImportJob
      * Raízes desconhecidas são restauradas, para formatos futuros não se
      * perderem em silêncio.
      */
+    private function isLiveDatabaseFile(string $dest): bool
+    {
+        $live = LiveDatabaseFiles::of($this->db);
+
+        return $live !== [] && in_array(LiveDatabaseFiles::normalise($dest), $live, true);
+    }
+
     private function shouldExtract(string $name, int $type, ?array $selection): bool
     {
         if ($selection === null) return true;
