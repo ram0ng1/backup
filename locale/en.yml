@@ -2,9 +2,6 @@ ramon-backup:
   admin:
     errors:
       generic: "Something went wrong. Try again."
-      boundary_title: "Could not render this section."
-      boundary_body: "An unexpected error occurred. The rest of the panel still works — try retrying, or reload the page if the issue persists."
-      boundary_retry: "Try again"
       confirm_default: "Confirm"
       cancel_default: "Cancel"
 
@@ -120,6 +117,7 @@ ramon-backup:
       encryption_help: "Uses libsodium hybrid encryption. The body is encrypted with a per-archive symmetric key, which is then sealed with a public key."
       encryption_external: "Encrypt to a different public key (for transfer)"
       encryption_external_help: "Paste the destination server's public key. Useful when preparing a backup to restore somewhere else without sharing private keys."
+      encryption_external_placeholder: "base64 public key"
       start_button: "Start backup"
       start_failed: "Could not start the export."
       cancel_button: "Cancel"
@@ -170,8 +168,9 @@ ramon-backup:
       section_root_extend: "Replace the root extend.php with the backup's"
       root_extend_warning: "The root extend.php is loaded before Flarum's error handler exists — a class it references that isn't installed here takes the forum down with a blank HTTP 500. The current file is copied to a .bak-* first, and the restore checks for unresolvable classes when it finishes."
       key_title: "Private key"
-      key_help: "This archive is encrypted. Paste the matching base64 private key — it stays in this browser session and is sent ONCE to the server for the restore."
+      key_help: "This archive is encrypted. Paste the matching base64 private key — it stays in this browser session and goes to the server with each step of the restore; it is never written to disk."
       key_hint_local: "Leave blank to use the private key configured in this server's config.php."
+      key_placeholder: "base64 private key"
       confirm_title: "Replace existing data"
       confirm_body: "Tables in the archive replace tables here. Files are written to their original paths."
       confirm_check: "I understand. Replace my current data with this backup."
@@ -181,8 +180,6 @@ ramon-backup:
       cancel_failed_warn: "Modal closed, but the server may still be applying changes. Verify the server state before retrying."
       close_button: "Close"
       completed: "Restore complete."
-      reload_required: "The forum data has been replaced. Reload the page to continue with a fresh session — your previous login may have been replaced too."
-      reload_button: "Reload page"
       done_title: "Restore complete"
       done_body: "All selected files have been restored. The database was not modified, so your current session is unchanged."
       incomplete_title: "Restore finished incomplete"

@@ -198,7 +198,9 @@ export default class ExportModal extends Modal<ExportModalAttrs> {
                   <textarea
                     className="FormControl BackupExport-keyInput"
                     rows={3}
-                    placeholder="base64 public key"
+                    placeholder={String(trans('encryption_external_placeholder'))}
+                    spellcheck={false}
+                    autocomplete="off"
                     value={this.externalPublicKey}
                     oninput={(e: Event) => {
                       this.externalPublicKey = (e.target as HTMLTextAreaElement).value;

@@ -10,7 +10,6 @@ import ExportModal from './ExportModal';
 import ImportModal from './ImportModal';
 import { confirmAsync } from './ConfirmModal';
 import { apiRequest, apiUrl, errorDetail } from '../utils/api';
-import { ErrorBoundary } from '../utils/errorBoundary';
 
 const trans = (key: string, params?: Record<string, unknown>) => app.translator.trans(`ramon-backup.admin.${key}`, params ?? {});
 
@@ -27,28 +26,26 @@ export default class BackupPanel extends Component<ComponentAttrs> {
   view() {
     return (
       <div className="BackupPanel">
-        <ErrorBoundary onError={(e: unknown) => console.error('[backup] panel render', e)}>
-          <section className="BackupPanel-actions">
-            <h3>{trans('panel.actions_title')}</h3>
-            <p className="helpText">{trans('panel.actions_help')}</p>
+        <section className="BackupPanel-actions">
+          <h3>{trans('panel.actions_title')}</h3>
+          <p className="helpText">{trans('panel.actions_help')}</p>
 
-            <div className="BackupPanel-actionButtons">
-              <Button className="Button Button--primary" icon="fas fa-download" onclick={() => this.openExport()}>
-                {trans('panel.create_button')}
-              </Button>
-              <Button className="Button" icon="fas fa-upload" onclick={() => this.openImport()}>
-                {trans('panel.import_button')}
-              </Button>
-            </div>
-          </section>
+          <div className="BackupPanel-actionButtons">
+            <Button className="Button Button--primary" icon="fas fa-download" onclick={() => this.openExport()}>
+              {trans('panel.create_button')}
+            </Button>
+            <Button className="Button" icon="fas fa-upload" onclick={() => this.openImport()}>
+              {trans('panel.import_button')}
+            </Button>
+          </div>
+        </section>
 
-          <EncryptionCard />
+        <EncryptionCard />
 
-          <section className="BackupPanel-list">
-            <h3>{trans('panel.list_title')}</h3>
-            {this.renderList()}
-          </section>
-        </ErrorBoundary>
+        <section className="BackupPanel-list">
+          <h3>{trans('panel.list_title')}</h3>
+          {this.renderList()}
+        </section>
       </div>
     );
   }

@@ -40,18 +40,26 @@ export interface ApiRequestOptions<T> extends FlarumRequestOptions<T> {
  *   - shows a Flarum alert (unless `surface: false`);
  *   - rethrows so the caller can still branch on the failure.
  *
- * Centralised so we don't reinvent error extraction at every call-site.
+ * O `errorHandler` vazio desliga o alerta padrão do Flarum: quem mostra
+ * o erro é este wrapper (ou o chamador, com `surface: false`), senão
+ * cada falha aparecia duas vezes. O log leva só status e detalhe, nunca
+ * o objeto do erro: ele carrega o corpo da requisição, e no import o
+ * corpo tem a chave privada.
  */
 export async function apiRequest<T>(opts: ApiRequestOptions<T>): Promise<T> {
+  const { surface, fallbackMessage, ...requestOptions } = opts;
+
   try {
-    return (await app.request<T>(opts)) as T;
+    return (await app.request<T>({ ...requestOptions, errorHandler: () => {} })) as T;
   } catch (raw: any) {
-    const detail = errorDetail(raw, opts.fallbackMessage);
-    console.error('[backup] api error', opts.method, opts.url, raw);
-    if (opts.surface !== false) {
+    const detail = errorDetail(raw, fallbackMessage);
+    console.error('[backup] api error', opts.method, opts.url, raw?.status, detail);
+    if (surface !== false) {
       app.alerts.show({ type: 'error' }, detail);
     }
-    if (raw && typeof raw === 'object' && !raw.detail) {
+    // Só grava o detalhe quando ele é específico: o genérico em `.detail`
+    // esconderia o fallback que o chamador passa para errorDetail().
+    if (fallbackMessage && raw && typeof raw === 'object' && !raw.detail) {
       try {
         raw.detail = detail;
       } catch {

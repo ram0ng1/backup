@@ -2,9 +2,6 @@ ramon-backup:
   admin:
     errors:
       generic: "Algo deu errado. Tente novamente."
-      boundary_title: "Não foi possível renderizar esta seção."
-      boundary_body: "Ocorreu um erro inesperado. O restante do painel continua funcionando — tente novamente, ou recarregue a página se o problema persistir."
-      boundary_retry: "Tentar novamente"
       confirm_default: "Confirmar"
       cancel_default: "Cancelar"
 
@@ -120,6 +117,7 @@ ramon-backup:
       encryption_help: "Usa criptografia híbrida via libsodium. O corpo é criptografado com uma chave simétrica única por arquivo, que é então selada com uma chave pública."
       encryption_external: "Criptografar com uma chave pública diferente (para transferência)"
       encryption_external_help: "Cole a chave pública do servidor de destino. Útil ao preparar um backup para restaurar em outro lugar sem compartilhar chaves privadas."
+      encryption_external_placeholder: "chave pública base64"
       start_button: "Iniciar backup"
       start_failed: "Não foi possível iniciar a exportação."
       cancel_button: "Cancelar"
@@ -170,8 +168,9 @@ ramon-backup:
       section_root_extend: "Substituir o extend.php da raiz pelo do backup"
       root_extend_warning: "O extend.php da raiz é carregado antes de existir handler de erro no Flarum — uma classe referenciada ali que não esteja instalada aqui derruba o fórum com HTTP 500 em branco. O arquivo atual é copiado para um .bak-* antes, e a restauração verifica classes não resolvidas ao terminar."
       key_title: "Chave privada"
-      key_help: "Este arquivo está criptografado. Cole a chave privada base64 correspondente — ela fica somente nesta sessão do navegador e é enviada UMA VEZ ao servidor para a restauração."
+      key_help: "Este arquivo está criptografado. Cole a chave privada base64 correspondente — ela fica somente nesta sessão do navegador e vai ao servidor a cada etapa da restauração; nunca é gravada em disco."
       key_hint_local: "Deixe em branco para usar a chave privada configurada no config.php deste servidor."
+      key_placeholder: "chave privada base64"
       confirm_title: "Substituir dados existentes"
       confirm_body: "As tabelas do arquivo substituem as tabelas atuais. Arquivos são gravados em seus caminhos originais."
       confirm_check: "Eu entendo. Substituir meus dados atuais por este backup."
@@ -181,8 +180,6 @@ ramon-backup:
       cancel_failed_warn: "O modal foi fechado, mas o servidor pode ainda estar aplicando alterações. Verifique o estado do servidor antes de tentar de novo."
       close_button: "Fechar"
       completed: "Restauração concluída."
-      reload_required: "Os dados do fórum foram substituídos. Recarregue a página para continuar com uma sessão nova — seu login anterior pode ter sido substituído também."
-      reload_button: "Recarregar página"
       done_title: "Restauração concluída"
       done_body: "Todos os arquivos selecionados foram restaurados. O banco não foi alterado, então sua sessão atual continua válida."
       incomplete_title: "Restauração terminou incompleta"

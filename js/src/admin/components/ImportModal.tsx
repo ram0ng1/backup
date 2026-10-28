@@ -62,6 +62,7 @@ interface InspectResult {
     manifest?: ArchiveManifest;
   };
   size: number;
+  advisories?: string[];
 }
 
 interface ImportProgress {
@@ -242,8 +243,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
       this.stage = 'configure';
     } catch (e: any) {
-      console.error('[backup] archive upload failed', e);
       this.uploadError = errorDetail(e, String(trans('upload_failed')));
+      console.error('[backup] archive upload failed', this.uploadError);
     } finally {
       this.uploading = false;
       m.redraw();
@@ -407,6 +408,16 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           <dd>{fmtBytes(i.size)}</dd>
         </dl>
 
+        {(i.advisories ?? []).length > 0 && (
+          <div className="Alert Alert--warning BackupImport-advisories">
+            <ul>
+              {i.advisories!.map((advisory) => (
+                <li>{advisory}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="Alert Alert--info BackupImport-urlNote">
           <i className="icon fas fa-info-circle" /> {trans('url_rewrite_note')}
         </div>
@@ -420,7 +431,10 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
             <textarea
               className="FormControl BackupImport-keyInput"
               rows={3}
-              placeholder="base64 private key"
+              placeholder={String(trans('key_placeholder'))}
+              spellcheck={false}
+              autocomplete="off"
+              autocapitalize="off"
               value={this.privateKey}
               oninput={(e: Event) => {
                 this.privateKey = (e.target as HTMLTextAreaElement).value;
@@ -762,8 +776,8 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
           // the server may still be mid-write. Surface a synthetic
           // error phase, and explicitly tell the user to verify
           // server state before retrying.
-          console.error('[backup] import tick failed', e);
           const detail = errorDetail(e, String(trans('phase_error_network')));
+          console.error('[backup] import tick failed', detail);
           this.status = {
             ...this.status!,
             phase: 'error',
@@ -780,7 +794,11 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
         // call from this stale session would fail (401 / CSRF) and
         // surface as a confusing "Oops!" toast. The user clicks
         // Reload below and gets a clean session.
-        app.alerts.show({ type: 'success' }, trans('completed'));
+        if (this.status.incomplete) {
+          app.alerts.show({ type: 'warning' }, trans('incomplete_title'));
+        } else {
+          app.alerts.show({ type: 'success' }, trans('completed'));
+        }
         if (!this.sectionDb) this.attrs.onComplete();
       }
     } finally {
@@ -790,14 +808,16 @@ export default class ImportModal extends Modal<ImportModalAttrs> {
 
   async cancel() {
     if (!this.inspect) return;
+    // Sem o inspect o laço do pump() para antes do próximo tick.
+    const jobId = this.inspect.job_id;
+    this.inspect = null;
     try {
       await apiRequest({
         method: 'DELETE',
-        url: `${apiUrl()}/backup/imports/${this.inspect.job_id}`,
+        url: `${apiUrl()}/backup/imports/${jobId}`,
         surface: false,
       });
-    } catch (e) {
-      console.error('[backup] import cancel failed', e);
+    } catch {
       app.alerts.show({ type: 'warning' }, trans('cancel_failed_warn'));
     }
     this.close();
