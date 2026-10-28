@@ -228,6 +228,15 @@ class ImportJob
                 default     => throw new RuntimeException("Unknown phase: $phase"),
             };
         } catch (Throwable $e) {
+            // Restore que parou no meio já trocou a tabela settings pela da
+            // origem: a configuração deste servidor volta antes do job morrer.
+            if (in_array($phase, ['restore', 'rewrite'], true)) {
+                try {
+                    $this->reapplyPreservedSettings($state);
+                } catch (Throwable) {
+                }
+            }
+
             // Job com erro não continua: o dump em claro e o estado de
             // criptografia não servem para mais nada e não ficam no disco.
             @unlink((string) ($state->get('paths')['dump'] ?? ''));
@@ -619,13 +628,12 @@ class ImportJob
         }
 
         $raw = @file_get_contents($file); /* arquivo do próprio job, 0600; nosemgrep: flarum-v2-server-side-fetch */
-        @unlink($file);
-
         if ($raw === false) {
             return;
         }
         $snapshot = json_decode($raw, true);
         if (! is_array($snapshot) || $snapshot === []) {
+            @unlink($file);
             return;
         }
 
@@ -637,6 +645,12 @@ class ImportJob
                 .'. Reveja SMTP, fila e integrações no painel.',
             ]);
             return;
+        }
+
+        // Só apaga a cópia quando tudo voltou: com a tabela settings fora
+        // do ar (restore que parou antes de recriá-la) ela é a única que sobra.
+        if (count($restored) === count($snapshot)) {
+            @unlink($file);
         }
 
         if ($restored === []) {
