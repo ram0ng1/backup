@@ -376,7 +376,7 @@ jobs:
       - name: Resolver dependências (composer update)
         run: composer update --no-interaction --no-progress --prefer-stable --no-scripts
 
-      - name: Chaves en ↔ pt-BR
+      - name: Chaves en ↔ es ↔ pt-BR
         run: vendor/bin/phpunit -c tests/phpunit.unit.xml --testsuite locale
 
   # Reprova PRs que tragam dependências com vulnerabilidade conhecida. Só em
