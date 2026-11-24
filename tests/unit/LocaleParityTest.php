@@ -25,7 +25,7 @@ use Symfony\Component\Yaml\Yaml;
  */
 final class LocaleParityTest extends TestCase
 {
-    private const LOCALES = ['en', 'pt-BR'];
+    private const LOCALES = ['en', 'es', 'pt-BR'];
 
     /** @return array<string, array{string}> idiomas comparados com o en */
     public static function translations(): array
